@@ -49,6 +49,39 @@ const (
 	dbEnv       = "PG_DB"
 )
 
+func readConfig() []models.GitterRepo {
+	yamlFile, err := ioutil.ReadFile("repos.yaml")
+	if err != nil {
+		log.Fatalf("Error reading YAML file: %v", err)
+	}
+
+	var config map[string]map[string][]string
+
+	// Unmarshal YAML into GitterRepoConfig struct
+	err = yaml.Unmarshal(yamlFile, &config)
+	if err != nil {
+		log.Fatalf("Error unmarshalling YAML: %v", err)
+	}
+
+	var gitterRepos []models.GitterRepo
+
+	// Extract information from GitterRepoConfig and create GitterRepo instances
+	for org, repos := range config {
+		for repo, tags := range repos {
+			for _, tag := range tags {
+				gitterRepo := models.GitterRepo{
+					Org:  org,
+					Repo: repo,
+					Tag:  tag,
+				}
+				log.Printf("Found repo in config: %+v\n", gitterRepo)
+				gitterRepos = append(gitterRepos, gitterRepo)
+			}
+		}
+	}
+	return gitterRepos
+}
+
 func main() {
 	db, err := sql.Open("sqlite3", "doc.db")
 

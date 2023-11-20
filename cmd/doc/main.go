@@ -17,31 +17,28 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"html/template"
 	"log"
 	"net/http"
-	"net/rpc"
 	"net/url"
 	"os"
 	"strings"
+	"database/sql"
 
-	crdutil "github.com/crdsdev/doc/pkg/crd"
+	// crdutil "github.com/crdsdev/doc/pkg/crd"
 	"github.com/crdsdev/doc/pkg/models"
-	"github.com/google/uuid"
-	"github.com/gorilla/mux"
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/pgxpool"
+	// "github.com/google/uuid"
+	// "github.com/gorilla/mux"
 	flag "github.com/spf13/pflag"
 	"github.com/unrolled/render"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
-	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	// v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/yaml"
+	_ "github.com/mattn/go-sqlite3"
 )
-
-var db *pgxpool.Pool
 
 // redis connection
 var (
@@ -58,8 +55,6 @@ var (
 
 	address   string
 	analytics bool = false
-
-	gitterChan chan models.GitterRepo
 )
 
 // SchemaPlusParent is a JSON schema plus the name of the parent field.
@@ -123,62 +118,36 @@ type homeData struct {
 	Repos []string
 }
 
-func worker(gitterChan <-chan models.GitterRepo) {
-	for job := range gitterChan {
-		client, err := rpc.DialHTTP("tcp", "127.0.0.1:1234")
-		if err != nil {
-			log.Fatal("dialing:", err)
-		}
-		reply := ""
-		if err := client.Call("Gitter.Index", job, &reply); err != nil {
-			log.Print("Could not index repo")
-		}
-	}
-}
-
-func tryIndex(repo models.GitterRepo, gitterChan chan models.GitterRepo) bool {
-	select {
-	case gitterChan <- repo:
-		return true
-	default:
-		return false
-	}
-}
-
-func init() {
-	// TODO(hasheddan): use a flag
-	analyticsStr := os.Getenv(envAnalytics)
-	if analyticsStr == "true" {
-		analytics = true
-	}
-
-	gitterChan = make(chan models.GitterRepo, 4)
-}
-
 func main() {
 	flag.Parse()
-	dsn := fmt.Sprintf("postgresql://%s:%s@%s:%s/%s", os.Getenv(userEnv), os.Getenv(passwordEnv), os.Getenv(hostEnv), os.Getenv(portEnv), os.Getenv(dbEnv))
-	conn, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		panic(err)
-	}
-	db, err = pgxpool.ConnectConfig(context.Background(), conn)
+	db, err := sql.Open("sqlite3", "doc.db")
 	if err != nil {
 		panic(err)
 	}
 
-	for i := 0; i < 4; i++ {
-		go worker(gitterChan)
+	//log.Println("Starting Doc server...")
+	//r := mux.NewRouter().StrictSlash(true)
+	// var outDir = "out"
+	// TODO copy over static files
+	// staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir("./static/")))
+
+	var gitterRepos = readConfig()
+
+	home("index.html")
+
+	for _, repo := range gitterRepos {
+		org(db, repo.Org, repo.Repo, repo.Tag)
 	}
 
-	start()
+	//r.PathPrefix("/static/").Handler(staticHandler)
+	//r.HandleFunc("/github.com/{org}/{repo}@{tag}", org)
+	//r.HandleFunc("/github.com/{org}/{repo}", org)
+	//r.PathPrefix("/").HandlerFunc(doc)
+	//log.Fatal(http.ListenAndServe(":5000", r))
 }
 
-func getPageData(r *http.Request, title string, disableNavBar bool) pageData {
+func getPageData(title string, disableNavBar bool) pageData {
 	var isDarkMode = false
-	if cookie, err := r.Cookie(cookieDarkMode); err == nil && cookie.Value == "dark-mode" {
-		isDarkMode = true
-	}
 	return pageData{
 		Analytics:     analytics,
 		IsDarkMode:    isDarkMode,
@@ -187,127 +156,71 @@ func getPageData(r *http.Request, title string, disableNavBar bool) pageData {
 	}
 }
 
-func start() {
-	log.Println("Starting Doc server...")
-	r := mux.NewRouter().StrictSlash(true)
-	staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir("./static/")))
-	r.HandleFunc("/", home)
-	r.PathPrefix("/static/").Handler(staticHandler)
-	r.HandleFunc("/github.com/{org}/{repo}@{tag}", org)
-	r.HandleFunc("/github.com/{org}/{repo}", org)
-	r.HandleFunc("/raw/github.com/{org}/{repo}@{tag}", raw)
-	r.HandleFunc("/raw/github.com/{org}/{repo}", raw)
-	r.PathPrefix("/").HandlerFunc(doc)
-	log.Fatal(http.ListenAndServe(":5000", r))
+func readConfig() []models.GitterRepo {
+	yamlFile, err := ioutil.ReadFile("repos.yaml")
+	if err != nil {
+		log.Fatalf("Error reading YAML file: %v", err)
+	}
+
+	var config map[string]map[string][]string
+
+	// Unmarshal YAML into GitterRepoConfig struct
+	err = yaml.Unmarshal(yamlFile, &config)
+	if err != nil {
+		log.Fatalf("Error unmarshalling YAML: %v", err)
+	}
+
+	var gitterRepos []models.GitterRepo
+
+	// Extract information from GitterRepoConfig and create GitterRepo instances
+	for org, repos := range config {
+		for repo, tags := range repos {
+			for _, tag := range tags {
+				gitterRepo := models.GitterRepo{
+					Org:  org,
+					Repo: repo,
+					Tag:  tag,
+				}
+				log.Printf("Found repo in config: %+v\n", gitterRepo)
+				gitterRepos = append(gitterRepos, gitterRepo)
+			}
+		}
+	}
+	return gitterRepos
 }
 
-func home(w http.ResponseWriter, r *http.Request) {
-	data := homeData{Page: getPageData(r, "Doc", true)}
-	if err := page.HTML(w, http.StatusOK, "home", data); err != nil {
+func home(outFile string) {
+	// Open the file for writing
+	file, err := os.Create(outFile)
+	if err != nil {
+		log.Printf("Error creating index.html: %v", err)
+		return
+	}
+	defer file.Close()
+	data := homeData{Page: getPageData("Doc", true)}
+	// TODO .. this seems to use go templates, and also "unroller". Maybe I don't need unroller?
+
+	if err := page.HTML(file, http.StatusOK, "home", data); err != nil {
 		log.Printf("homeTemplate.Execute(): %v", err)
-		fmt.Fprint(w, "Unable to render home template.")
 		return
 	}
 	log.Print("successfully rendered home page")
 }
 
-func raw(w http.ResponseWriter, r *http.Request) {
-	parameters := mux.Vars(r)
-	org := parameters["org"]
-	repo := parameters["repo"]
-	tag := parameters["tag"]
-
+func org(db *sql.DB, org string, repo string, tag string) {
+	pageData := getPageData(fmt.Sprintf("%s/%s", org, repo), false)
 	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
-	var rows pgx.Rows
+	var c *sql.Rows
 	var err error
 	if tag == "" {
-		rows, err = db.Query(context.Background(), "SELECT c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER($1) ORDER BY time DESC LIMIT 1);", fullRepo)
-	} else {
-		rows, err = db.Query(context.Background(), "SELECT c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2;", fullRepo, tag)
-	}
-
-	var res []byte
-	var total []byte
-	for err == nil && rows.Next() {
-		if err := rows.Scan(&res); err != nil {
-			break
-		}
-		crd := &apiextensions.CustomResourceDefinition{}
-		if err := yaml.Unmarshal(res, crd); err != nil {
-			break
-		}
-		crdv1 := &v1.CustomResourceDefinition{}
-		if err := v1.Convert_apiextensions_CustomResourceDefinition_To_v1_CustomResourceDefinition(crd, crdv1, nil); err != nil {
-			break
-		}
-		crdv1.SetGroupVersionKind(v1.SchemeGroupVersion.WithKind("CustomResourceDefinition"))
-		y, err := yaml.Marshal(crdv1)
-		if err != nil {
-			break
-		}
-		total = append(total, y...)
-		total = append(total, []byte("\n---\n")...)
-	}
-
-	if err != nil {
-		fmt.Fprint(w, "Unable to render raw CRDs.")
-		log.Printf("failed to get raw CRDs for %s : %v", repo, err)
-	} else {
-		w.Write([]byte(total))
-		log.Printf("successfully rendered raw CRDs")
-	}
-
-	if analytics {
-		u := uuid.New().String()
-		// TODO(hasheddan): do not hardcode tid and dh
-		metrics := url.Values{
-			"v":   {"1"},
-			"t":   {"pageview"},
-			"tid": {"UA-116820283-2"},
-			"cid": {u},
-			"dh":  {"doc.crds.dev"},
-			"dp":  {r.URL.Path},
-			"uip": {r.RemoteAddr},
-		}
-		client := &http.Client{}
-
-		req, _ := http.NewRequest("POST", "http://www.google-analytics.com/collect", strings.NewReader(metrics.Encode()))
-		req.Header.Add("User-Agent", r.UserAgent())
-		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-
-		if _, err := client.Do(req); err != nil {
-			log.Printf("failed to report analytics: %s", err.Error())
-		} else {
-			log.Printf("successfully reported analytics")
-		}
-	}
-}
-
-func org(w http.ResponseWriter, r *http.Request) {
-	parameters := mux.Vars(r)
-	org := parameters["org"]
-	repo := parameters["repo"]
-	tag := parameters["tag"]
-	pageData := getPageData(r, fmt.Sprintf("%s/%s", org, repo), false)
-	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
-	b := &pgx.Batch{}
-	if tag == "" {
-		b.Queue("SELECT t.name, c.group, c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER($1) ORDER BY time DESC LIMIT 1);", fullRepo)
+		c, err = db.Query("SELECT t.name, c.group, c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER($1) ORDER BY time ASC LIMIT 1);", fullRepo)
 	} else {
 		pageData.Title += fmt.Sprintf("@%s", tag)
-		b.Queue("SELECT t.name, c.group, c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2;", fullRepo, tag)
+		c, err = db.Query("SELECT t.name, c.group, c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2;", fullRepo, tag)
 	}
-	b.Queue("SELECT name FROM tags WHERE LOWER(repo)=LOWER($1) ORDER BY time DESC;", fullRepo)
-	br := db.SendBatch(context.Background(), b)
-	defer br.Close()
-	c, err := br.Query()
 	if err != nil {
 		log.Printf("failed to get CRDs for %s : %v", repo, err)
-		if err := page.HTML(w, http.StatusOK, "new", baseData{Page: pageData}); err != nil {
-			log.Printf("newTemplate.Execute(): %v", err)
-			fmt.Fprint(w, "Unable to render new template.")
-		}
-		return
+		panic(err)
 	}
 	repoCRDs := map[string]models.RepoCRD{}
 	foundTag := tag
@@ -315,7 +228,6 @@ func org(w http.ResponseWriter, r *http.Request) {
 		var t, g, v, k string
 		if err := c.Scan(&t, &g, &v, &k); err != nil {
 			log.Printf("newTemplate.Execute(): %v", err)
-			fmt.Fprint(w, "Unable to render new template.")
 		}
 		foundTag = t
 		repoCRDs[g+"/"+v+"/"+k] = models.RepoCRD{
@@ -324,14 +236,10 @@ func org(w http.ResponseWriter, r *http.Request) {
 			Kind:    k,
 		}
 	}
-	c, err = br.Query()
+	c, err = db.Query("SELECT name FROM tags WHERE LOWER(repo)=LOWER($1) ORDER BY time DESC;", fullRepo)
 	if err != nil {
 		log.Printf("failed to get tags for %s : %v", repo, err)
-		if err := page.HTML(w, http.StatusOK, "new", baseData{Page: pageData}); err != nil {
-			log.Printf("newTemplate.Execute(): %v", err)
-			fmt.Fprint(w, "Unable to render new template.")
-		}
-		return
+		panic(err)  // something went wrong, there should be tags
 	}
 	tags := []string{}
 	tagExists := false
@@ -339,7 +247,6 @@ func org(w http.ResponseWriter, r *http.Request) {
 		var t string
 		if err := c.Scan(&t); err != nil {
 			log.Printf("newTemplate.Execute(): %v", err)
-			fmt.Fprint(w, "Unable to render new template.")
 		}
 		if !tagExists && t == tag {
 			tagExists = true
@@ -347,21 +254,18 @@ func org(w http.ResponseWriter, r *http.Request) {
 		tags = append(tags, t)
 	}
 	if len(tags) == 0 || (!tagExists && tag != "") {
-		tryIndex(models.GitterRepo{
-			Org:  org,
-			Repo: repo,
-			Tag:  tag,
-		}, gitterChan)
-		if err := page.HTML(w, http.StatusOK, "new", baseData{Page: pageData}); err != nil {
-			log.Printf("newTemplate.Execute(): %v", err)
-			fmt.Fprint(w, "Unable to render new template.")
-		}
-		return
+		panic("This shouldn't happend!")
 	}
 	if foundTag == "" {
 		foundTag = tags[0]
 	}
-	if err := page.HTML(w, http.StatusOK, "org", orgData{
+	file, err := os.Create("org.html")
+	if err != nil {
+		log.Printf("Error creating index.html: %v", err)
+		return
+	}
+	defer file.Close()
+	if err := page.HTML(file, http.StatusOK, "org", orgData{
 		Page:  pageData,
 		Repo:  strings.Join([]string{org, repo}, "/"),
 		Tag:   foundTag,
@@ -370,79 +274,78 @@ func org(w http.ResponseWriter, r *http.Request) {
 		Total: len(repoCRDs),
 	}); err != nil {
 		log.Printf("orgTemplate.Execute(): %v", err)
-		fmt.Fprint(w, "Unable to render org template.")
 		return
 	}
 	log.Printf("successfully rendered org template")
 }
 
-func doc(w http.ResponseWriter, r *http.Request) {
-	var schema *apiextensions.CustomResourceValidation
-	crd := &apiextensions.CustomResourceDefinition{}
-	log.Printf("Request Received: %s\n", r.URL.Path)
-	org, repo, group, kind, version, tag, err := parseGHURL(r.URL.Path)
-	if err != nil {
-		log.Printf("failed to parse Github path: %v", err)
-		fmt.Fprint(w, "Invalid URL.")
-		return
-	}
-	pageData := getPageData(r, fmt.Sprintf("%s.%s/%s", kind, group, version), false)
-	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
-	var c pgx.Row
-	if tag == "" {
-		c = db.QueryRow(context.Background(), "SELECT t.name, c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE repo = $1 ORDER BY time DESC LIMIT 1) AND c.group=$2 AND c.version=$3 AND c.kind=$4;", fullRepo, group, version, kind)
-	} else {
-		c = db.QueryRow(context.Background(), "SELECT t.name, c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2 AND c.group=$3 AND c.version=$4 AND c.kind=$5;", fullRepo, tag, group, version, kind)
-	}
-	foundTag := tag
-	if err := c.Scan(&foundTag, crd); err != nil {
-		log.Printf("failed to get CRDs for %s : %v", repo, err)
-		if err := page.HTML(w, http.StatusOK, "doc", baseData{Page: pageData}); err != nil {
-			log.Printf("newTemplate.Execute(): %v", err)
-			fmt.Fprint(w, "Unable to render new template.")
-		}
-	}
-	schema = crd.Spec.Validation
-	if len(crd.Spec.Versions) > 1 {
-		for _, version := range crd.Spec.Versions {
-			if version.Storage == true {
-				if version.Schema != nil {
-					schema = version.Schema
-				}
-				break
-			}
-		}
-	}
+// func doc(w http.ResponseWriter, r *http.Request) {
+// 	var schema *apiextensions.CustomResourceValidation
+// 	crd := &apiextensions.CustomResourceDefinition{}
+// 	log.Printf("Request Received: %s\n", r.URL.Path)
+// 	org, repo, group, kind, version, tag, err := parseGHURL(r.URL.Path)
+// 	if err != nil {
+// 		log.Printf("failed to parse Github path: %v", err)
+// 		fmt.Fprint(w, "Invalid URL.")
+// 		return
+// 	}
+// 	pageData := getPageData(fmt.Sprintf("%s.%s/%s", kind, group, version), false)
+// 	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
+// 	var c pgx.Row
+// 	if tag == "" {
+// 		c = db.QueryRow("SELECT t.name, c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE repo = $1 ORDER BY time DESC LIMIT 1) AND c.group=$2 AND c.version=$3 AND c.kind=$4;", fullRepo, group, version, kind)
+// 	} else {
+// 		c = db.QueryRow("SELECT t.name, c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2 AND c.group=$3 AND c.version=$4 AND c.kind=$5;", fullRepo, tag, group, version, kind)
+// 	}
+// 	foundTag := tag
+// 	if err := c.Scan(&foundTag, crd); err != nil {
+// 		log.Printf("failed to get CRDs for %s : %v", repo, err)
+// 		if err := page.HTML(w, http.StatusOK, "doc", baseData{Page: pageData}); err != nil {
+// 			log.Printf("newTemplate.Execute(): %v", err)
+// 			fmt.Fprint(w, "Unable to render new template.")
+// 		}
+// 	}
+// 	schema = crd.Spec.Validation
+// 	if len(crd.Spec.Versions) > 1 {
+// 		for _, version := range crd.Spec.Versions {
+// 			if version.Storage == true {
+// 				if version.Schema != nil {
+// 					schema = version.Schema
+// 				}
+// 				break
+// 			}
+// 		}
+// 	}
 
-	if schema == nil || schema.OpenAPIV3Schema == nil {
-		log.Print("CRD schema is nil.")
-		fmt.Fprint(w, "Supplied CRD has no schema.")
-		return
-	}
+// 	if schema == nil || schema.OpenAPIV3Schema == nil {
+// 		log.Print("CRD schema is nil.")
+// 		fmt.Fprint(w, "Supplied CRD has no schema.")
+// 		return
+// 	}
 
-	gvk := crdutil.GetStoredGVK(crd)
-	if gvk == nil {
-		log.Print("CRD GVK is nil.")
-		fmt.Fprint(w, "Supplied CRD has no GVK.")
-		return
-	}
+// 	gvk := crdutil.GetStoredGVK(crd)
+// 	if gvk == nil {
+// 		log.Print("CRD GVK is nil.")
+// 		fmt.Fprint(w, "Supplied CRD has no GVK.")
+// 		return
+// 	}
 
-	if err := page.HTML(w, http.StatusOK, "doc", docData{
-		Page:        pageData,
-		Repo:        strings.Join([]string{org, repo}, "/"),
-		Tag:         foundTag,
-		Group:       gvk.Group,
-		Version:     gvk.Version,
-		Kind:        gvk.Kind,
-		Description: string(schema.OpenAPIV3Schema.Description),
-		Schema:      *schema.OpenAPIV3Schema,
-	}); err != nil {
-		log.Printf("docTemplate.Execute(): %v", err)
-		fmt.Fprint(w, "Supplied CRD has no schema.")
-		return
-	}
-	log.Printf("successfully rendered doc template")
-}
+// 	if err := page.HTML(w, http.StatusOK, "doc", docData{
+// 		Page:        pageData,
+// 		Repo:        strings.Join([]string{org, repo}, "/"),
+// 		Tag:         foundTag,
+// 		Group:       gvk.Group,
+// 		Version:     gvk.Version,
+// 		Kind:        gvk.Kind,
+// 		Description: string(schema.OpenAPIV3Schema.Description),
+// 		Schema:      *schema.OpenAPIV3Schema,
+// 	}); err != nil {
+// 		log.Printf("docTemplate.Execute(): %v", err)
+// 		fmt.Fprint(w, "Supplied CRD has no schema.")
+// 		return
+// 	}
+// 	log.Printf("successfully rendered doc template")
+// }
 
 // TODO(hasheddan): add testing and more reliable parse
 func parseGHURL(uPath string) (org, repo, group, version, kind, tag string, err error) {
