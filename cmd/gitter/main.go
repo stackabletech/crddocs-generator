@@ -18,28 +18,24 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
-	"net"
-	"net/http"
-	"net/rpc"
 	"os"
 	"path"
 	"regexp"
 	"strings"
 	"time"
+	"database/sql"
 
 	"github.com/crdsdev/doc/pkg/crd"
 	"github.com/crdsdev/doc/pkg/models"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/pkg/errors"
 	"gopkg.in/square/go-jose.v2/json"
+	_ "github.com/mattn/go-sqlite3"
 	yaml "gopkg.in/yaml.v3"
 )
 
@@ -54,31 +50,37 @@ const (
 )
 
 func main() {
-	dsn := fmt.Sprintf("postgresql://%s:%s@%s:%s/%s", os.Getenv(userEnv), os.Getenv(passwordEnv), os.Getenv(hostEnv), os.Getenv(portEnv), os.Getenv(dbEnv))
-	conn, err := pgxpool.ParseConfig(dsn)
+	db, err := sql.Open("sqlite3", "doc.db")
+
 	if err != nil {
 		panic(err)
 	}
-	pool, err := pgxpool.ConnectConfig(context.Background(), conn)
-	if err != nil {
-		panic(err)
-	}
+
 	gitter := &Gitter{
-		conn: pool,
+		db: db,
 	}
-	rpc.Register(gitter)
-	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", ":1234")
-	if e != nil {
-		log.Fatal("listen error:", e)
+
+	repo := models.GitterRepo{
+        Org:  "stackabletech",
+        Repo: "druid-operator",
+        Tag:  "23.7.0",
+    }
+
+	// Call the Index method on the Gitter instance
+	var replyString string
+	err = gitter.Index(repo, &replyString)
+
+	// Check for errors
+	if err != nil {
+		fmt.Println("Error:", err)
+	} else {
+		fmt.Println("Reply:", replyString)
 	}
-	log.Println("Starting gitter...")
-	http.Serve(l, nil)
 }
 
 // Gitter indexes git repos.
 type Gitter struct {
-	conn *pgxpool.Pool
+	db *sql.DB
 }
 
 type tag struct {
@@ -151,13 +153,15 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 			log.Printf("Unable to resolve revision: %s (%v)", t.hash.String(), err)
 			continue
 		}
-		r := g.conn.QueryRow(context.Background(), "SELECT id FROM tags WHERE name=$1 AND repo=$2", t.name, fullRepo)
+		log.Println("QueryRow")
+		r := g.db.QueryRow("SELECT id FROM tags WHERE name=$1 AND repo=$2", t.name, fullRepo)
 		var tagID int
 		if err := r.Scan(&tagID); err != nil {
-			if !errors.Is(err, pgx.ErrNoRows) {
+			if !errors.Is(err, sql.ErrNoRows) {
+				log.Println("Got an error")
 				return err
 			}
-			r := g.conn.QueryRow(context.Background(), "INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", t.name, fullRepo, c.Committer.When)
+			r := g.db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", t.name, fullRepo, c.Committer.When)
 			if err := r.Scan(&tagID); err != nil {
 				return err
 			}
@@ -172,7 +176,7 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 			for _, crd := range repoCRDs {
 				allArgs = append(allArgs, crd.Group, crd.Version, crd.Kind, tagID, crd.Filename, crd.CRD)
 			}
-			if _, err := g.conn.Exec(context.Background(), buildInsert("INSERT INTO crds(\"group\", version, kind, tag_id, filename, data) VALUES ", crdArgCount, len(repoCRDs))+"ON CONFLICT DO NOTHING", allArgs...); err != nil {
+			if _, err := g.db.Exec(buildInsert("INSERT INTO crds(\"group\", version, kind, tag_id, filename, data) VALUES ", crdArgCount, len(repoCRDs))+"ON CONFLICT DO NOTHING", allArgs...); err != nil {
 				return err
 			}
 		}

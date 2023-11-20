@@ -13,6 +13,7 @@ require (
 	github.com/imdario/mergo v0.3.7 // indirect
 	github.com/jackc/pgx/v4 v4.10.1
 	github.com/lib/pq v1.9.0 // indirect
+	github.com/mattn/go-sqlite3 v1.14.18 // indirect
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5

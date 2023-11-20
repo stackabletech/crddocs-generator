@@ -1,21 +1,18 @@
-CREATE DATABASE doc;
-
-\connect doc;
-
 CREATE TABLE tags (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    repo VARCHAR(255) NOT NULL,
-    time TIMESTAMP NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     UNIQUE(name, repo)
 );
 
 CREATE TABLE crds (
-    "group" VARCHAR(255) NOT NULL,
-    version VARCHAR(255) NOT NULL,
-    kind VARCHAR(255) NOT NULL,
-    tag_id INTEGER NOT NULL REFERENCES tags (id) ON DELETE CASCADE,
-    filename VARCHAR(255) NOT NULL,
-    data JSONB NOT NULL,
-    PRIMARY KEY(tag_id, "group", version, kind)
+    "group" TEXT NOT NULL,
+    version TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    tag_id INTEGER NOT NULL,
+    filename TEXT NOT NULL,
+    data JSON NOT NULL,
+    PRIMARY KEY(tag_id, "group", version, kind),
+    FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE
 );
