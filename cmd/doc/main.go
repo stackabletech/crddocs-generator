@@ -198,11 +198,9 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 
 	pageData := getPageData(fmt.Sprintf("%s/%s", org, repo), false)
 	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
-	log.Printf("fullRepo: '%s'", fullRepo)
-	log.Printf("'%s'", tag)
 	var c *sql.Rows
 	if tag == "" {
-		c, err = db.Query("SELECT t.name, c.'group', c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER($1) ORDER BY time ASC LIMIT 1);", fullRepo)
+		c, err = db.Query("SELECT t.name, c.'group', c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER($1) ORDER BY time DESC LIMIT 1);", fullRepo)
 	} else {
 		pageData.Title += fmt.Sprintf("@%s", tag)
 		c, err = db.Query("SELECT t.name, c.'group', c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2;", fullRepo, tag)
@@ -224,6 +222,8 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 			Version: v,
 			Kind:    k,
 		}
+		// TODO I'm not happy about calling this function here, I'd rather call it in a different loop in main
+		// but it works for now
 		doc(db, outDir, org, repo, tag, g, k, v)
 	}
 	if c.Err() != nil {

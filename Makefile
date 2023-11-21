@@ -24,4 +24,8 @@ run-gitter:
 copy-static-files:
 	cp -r static out/static
 
-# To build it all, run gitter, run doc, copy static files
+serve:
+	python -m http.server --directory out
+
+# Run this if you wanna see how it works
+all: build-gitter build-doc sqlite-db run-gitter run-doc copy-static-files

@@ -1,62 +1,29 @@
-<div class="position-fixed top-0 right-0 z-10">
-    <button class="btn btn-primary m-10 mr-15" type="button" onclick="halfmoon.toggleDarkMode()"><i class="fas fa-moon" aria-hidden="true"></i><span class="sr-only">Toggle Dark Mode</span></button>
-</div>
-
 <div class="content-wrapper home-page">
     <div class="container mt-md-20">
         <div class="content hero">
-            <h1 class="text-center site-title">doc.crds.dev</h1>
-            <div id="repo_go"></div>
-            <p class="text-center">doc.crds.dev is and always will be <a href="https://github.com/crdsdev/doc">free and open source</a>.</p>
+            <h1 class="text-center site-title">Stackable Data Platform CRD Docs</h1>
+            <ul>
+                <li><a href="/stackabletech/airflow-operator">Airflow Operator</a></li>
+                <li><a href="/stackabletech/druid-operator">Druid Operator</a></li>
+                <li><a href="/stackabletech/hbase-operator">HBase Operator</a></li>
+                <li><a href="/stackabletech/hdfs-operator">HDFS Operator</a></li>
+                <li><a href="/stackabletech/hive-operator">Hive Operator</a></li>
+                <li><a href="/stackabletech/kafka-operator">Kafka Operator</a></li>
+                <li><a href="/stackabletech/nifi-operator">NiFi Operator</a></li>
+                <li><a href="/stackabletech/spark-k8s-operator">Spark Operator</a></li>
+                <li><a href="/stackabletech/superset-operator">Superset Operator</a></li>
+                <li><a href="/stackabletech/trino-operator">Trino Operator</a></li>
+                <li><a href="/stackabletech/zookeeper-operator">ZooKeeper Operator</a></li>
+                <li><a href="/stackabletech/opa-operator">OPA Operator</a></li>
+                <li><a href="/stackabletech/commons-operator">Commons Operator</a></li>
+                <li><a href="/stackabletech/listener-operator">Listener Operator</a></li>
+                <li><a href="/stackabletech/secret-operator">Secret Operator</a></li>
+            </ul>
         </div>
-        <p>To find a repo, search <kbd>github.com/{org}/{repo}</kbd>. You may optionally append <kbd>@{version}</kbd> to view documentation for a specific version of the project. For example: <a href="/github.com/crossplane/crossplane@v0.10.0">github.com/crossplane/crossplane@v0.10.0</a>. If you do not include a tag, the latest indexed tag will be served.</p>
     </div>
 </div>
 
 {{ template "_scripts" . }}
-<script type="module">
-    const { render } = ReactDOM;
-    const { useState, useRef, useEffect } = React;
-    const { html } = htmReact;
-
-    function RepoGo() {
-        const [url, setUrl] = useState('');
-        const input = useRef(null);
-
-        const onSubmit = e => {
-            const urlParts = url
-                .replace(/https?:\/\//, "")
-                .split("/");
-            urlParts[0] = urlParts[0].toLowerCase();
-            window.location.assign(`/${urlParts.join("/")}`);
-            e.preventDefault();
-        };
-
-        useEffect(() => {
-            halfmoon.keydownHandler = e => {
-                if (!(document.querySelector("input:focus") || document.querySelector("textarea:focus") || document.querySelector("select:focus"))) {
-                    // Focus the repository search input when [/] is pressed
-                    if (event.which == 191) {
-                        input.current && input.current.focus();
-                        e.preventDefault();
-                    }
-                }
-            }
-        }, []);
-
-        return html`
-        <form class="input-group input-group-lg" onSubmit=${onSubmit}>
-            <div class="input-group-prepend">
-                <span class="input-group-text"><kbd class="ml-5">/</kbd></span>
-            </div>
-            <input ref=${input} type="text" class="form-control" placeholder="github.com/crossplane/provider-gcp" onInput=${e => setUrl(e.target.value)} value=${url} />
-            <div class="input-group-append">
-                <button class="btn btn-primary" type="search">Go</span>
-            </div>
-        </form>`;
-    }
-    render(html`<${RepoGo} />`, document.getElementById("repo_go"));
-</script>
 
 <style>
     .home-page .hero {
