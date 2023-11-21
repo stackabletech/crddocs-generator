@@ -18,6 +18,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"html/template"
@@ -223,7 +224,7 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 			Version: v,
 			Kind:    k,
 		}
-		// doc(db, outDir, org, repo, tag, g, k, v)
+		doc(db, outDir, org, repo, tag, g, k, v)
 	}
 	if c.Err() != nil {
 		log.Printf("Error in Next: %s", err)
@@ -286,15 +287,21 @@ func doc(db *sql.DB, outDir string, org string, repo string, tag string, group s
 	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
 	var c *sql.Row
 	if tag == "" {
-		c = db.QueryRow("SELECT t.name, c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE repo = $1 ORDER BY time DESC LIMIT 1) AND c.\"group\"=$2 AND c.version=$3 AND c.kind=$4;", fullRepo, group, version, kind)
+		c = db.QueryRow("SELECT t.name, c.data FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE repo = $1 ORDER BY time DESC LIMIT 1) AND c.\"group\"=$2 AND c.version=$3 AND c.kind=$4;", fullRepo, group, version, kind)
 	} else {
-		c = db.QueryRow("SELECT t.name, c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2 AND c.\"group\"=$3 AND c.version=$4 AND c.kind=$5;", fullRepo, tag, group, version, kind)
+		c = db.QueryRow("SELECT t.name, c.data FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2 AND c.'group'=$3 AND c.version=$4 AND c.kind=$5;", fullRepo, tag, group, version, kind)
 	}
 	foundTag := tag
-	crd := &apiextensions.CustomResourceDefinition{}
-	if err := c.Scan(&foundTag, crd); err != nil {
+	var crdJSON string
+	if err := c.Scan(&foundTag, &crdJSON); err != nil {
 		log.Printf("failed to get CRDs for %s : %v", repo, err)
 		panic(err)
+	}
+	crd := &apiextensions.CustomResourceDefinition{}
+	err = json.Unmarshal([]byte(crdJSON), &crd)
+	if err != nil {
+		fmt.Println("Error unmarshalling JSON:", err)
+		return
 	}
 	var schema *apiextensions.CustomResourceValidation
 	schema = crd.Spec.Validation
