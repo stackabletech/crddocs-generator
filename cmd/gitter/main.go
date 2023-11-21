@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -41,12 +42,6 @@ import (
 
 const (
 	crdArgCount = 6
-
-	userEnv     = "PG_USER"
-	passwordEnv = "PG_PASS"
-	hostEnv     = "PG_HOST"
-	portEnv     = "PG_PORT"
-	dbEnv       = "PG_DB"
 )
 
 func readConfig() []models.GitterRepo {
@@ -83,8 +78,23 @@ func readConfig() []models.GitterRepo {
 }
 
 func main() {
-	db, err := sql.Open("sqlite3", "doc.db")
+	// Define command-line flags
+	var dbFile string
+	var configFile string
 
+	flag.StringVar(&dbFile, "db", "", "Specify an SQLite3 database with the correct tables initialized")
+	flag.StringVar(&configFile, "config", "", "Specify a yaml config file containing the repos to index")
+
+	flag.Parse()
+
+	// Check for mandatory flags
+	if dbFile == "" || configFile ==  "" {
+		fmt.Println("Error: db and config flags are required.")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	db, err := sql.Open("sqlite3", dbFile)
 	if err != nil {
 		panic(err)
 	}
@@ -93,7 +103,7 @@ func main() {
 		db: db,
 	}
 
-	yamlFile, err := ioutil.ReadFile("repos.yaml")
+	yamlFile, err := ioutil.ReadFile(configFile)
 	if err != nil {
 		log.Fatalf("Error reading YAML file: %v", err)
 	}

@@ -19,6 +19,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"html/template"
@@ -29,11 +30,8 @@ import (
 
 	crdutil "github.com/crdsdev/doc/pkg/crd"
 	"github.com/crdsdev/doc/pkg/models"
-	// "github.com/google/uuid"
-	flag "github.com/spf13/pflag"
 	"github.com/unrolled/render"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
-	// v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/yaml"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -43,7 +41,7 @@ var (
 	envAnalytics   = "ANALYTICS"
 	envDevelopment = "IS_DEV"
 
-	address   string
+	address string
 	analytics bool = false
 )
 
@@ -52,23 +50,6 @@ type SchemaPlusParent struct {
 	Parent string
 	Schema map[string]apiextensions.JSONSchemaProps
 }
-
-var page = render.New(render.Options{
-	Extensions:    []string{".html"},
-	Directory:     "template",
-	Layout:        "layout",
-	IsDevelopment: os.Getenv(envDevelopment) == "true",
-	Funcs: []template.FuncMap{
-		{
-			"plusParent": func(p string, s map[string]apiextensions.JSONSchemaProps) *SchemaPlusParent {
-				return &SchemaPlusParent{
-					Parent: p,
-					Schema: s,
-				}
-			},
-		},
-	},
-})
 
 type pageData struct {
 	Analytics     bool
@@ -108,23 +89,64 @@ type homeData struct {
 	Repos []string
 }
 
+var page *render.Render
+
 func main() {
+	var dbFile string
+	var configFile string
+	var outDir string
+	var templateDir string
+
+	flag.StringVar(&dbFile, "db", "", "Specify an SQLite3 database with the correct tables initialized")
+	flag.StringVar(&configFile, "config", "", "Specify a yaml config file containing the repos to index")
+	flag.StringVar(&outDir, "out", "", "Specify the directory where the site should be generated")
+	flag.StringVar(&templateDir, "template", "", "Specify where the template files are located")
+
 	flag.Parse()
-	db, err := sql.Open("sqlite3", "doc.db")
+
+	// Check for mandatory flags
+	if dbFile == "" || configFile ==  "" || outDir == "" || templateDir == "" {
+		fmt.Println("Error: db, config, out and template flags are required.")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	// open database
+	db, err := sql.Open("sqlite3", dbFile)
 	if err != nil {
 		panic(err)
 	}
 
-	var outDir = "out"
+	// create output directory
 	err = os.MkdirAll(outDir, 0755)
 	if err != nil {
 		log.Println("Error creating output directory:", err)
 		return
 	}
 
+	// initialize renderer
+	page = render.New(render.Options{
+		Extensions:    []string{".html"},
+		Directory:     templateDir,
+		Layout:        "layout",
+		IsDevelopment: os.Getenv(envDevelopment) == "true",
+		Funcs: []template.FuncMap{
+			{
+				"plusParent": func(p string, s map[string]apiextensions.JSONSchemaProps) *SchemaPlusParent {
+					return &SchemaPlusParent{
+						Parent: p,
+						Schema: s,
+					}
+				},
+			},
+		},
+	})
+
+	// generate landing page
 	home(outDir)
 
-	yamlFile, err := ioutil.ReadFile("repos.yaml")
+	// read config file
+	yamlFile, err := ioutil.ReadFile(configFile)
 	if err != nil {
 		log.Fatalf("Error reading YAML file: %v", err)
 	}
@@ -136,6 +158,7 @@ func main() {
 		log.Fatalf("Error unmarshalling YAML: %v", err)
 	}
 
+	// generate doc pages for all repos and CRDs
 	for orgname, repos := range config {
 		for repo, tags := range repos {
 			org(db, outDir, orgname, repo, "")
@@ -144,8 +167,6 @@ func main() {
 			}
 		}
 	}
-
-	//r.PathPrefix("/").HandlerFunc(doc)
 }
 
 func getPageData(title string, disableNavBar bool) pageData {
@@ -167,7 +188,6 @@ func home(outDir string) {
 	}
 	defer file.Close()
 	data := homeData{Page: getPageData("Doc", true)}
-	// TODO .. this seems to use go templates, and also "unroller". Maybe I don't need unroller?
 
 	if err := page.HTML(file, http.StatusOK, "home", data); err != nil {
 		log.Printf("homeTemplate.Execute(): %v", err)
