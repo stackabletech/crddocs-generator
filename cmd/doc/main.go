@@ -18,20 +18,17 @@ package main
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"html/template"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 
-	// crdutil "github.com/crdsdev/doc/pkg/crd"
+	crdutil "github.com/crdsdev/doc/pkg/crd"
 	"github.com/crdsdev/doc/pkg/models"
 	// "github.com/google/uuid"
-	// "github.com/gorilla/mux"
 	flag "github.com/spf13/pflag"
 	"github.com/unrolled/render"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
@@ -44,14 +41,6 @@ import (
 var (
 	envAnalytics   = "ANALYTICS"
 	envDevelopment = "IS_DEV"
-
-	userEnv     = "PG_USER"
-	passwordEnv = "PG_PASS"
-	hostEnv     = "PG_HOST"
-	portEnv     = "PG_PORT"
-	dbEnv       = "PG_DB"
-
-	cookieDarkMode = "halfmoon_preferredMode"
 
 	address   string
 	analytics bool = false
@@ -125,17 +114,12 @@ func main() {
 		panic(err)
 	}
 
-	//log.Println("Starting Doc server...")
-	//r := mux.NewRouter().StrictSlash(true)
 	var outDir = "out"
 	err = os.MkdirAll(outDir, 0755)
 	if err != nil {
 		log.Println("Error creating output directory:", err)
 		return
 	}
-	// TODO copy over static files
-	// staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir("./static/")))
-
 
 	home(outDir)
 
@@ -160,12 +144,7 @@ func main() {
 		}
 	}
 
-
-	//r.PathPrefix("/static/").Handler(staticHandler)
-	//r.HandleFunc("/github.com/{org}/{repo}@{tag}", org)
-	//r.HandleFunc("/github.com/{org}/{repo}", org)
 	//r.PathPrefix("/").HandlerFunc(doc)
-	//log.Fatal(http.ListenAndServe(":5000", r))
 }
 
 func getPageData(title string, disableNavBar bool) pageData {
@@ -176,39 +155,6 @@ func getPageData(title string, disableNavBar bool) pageData {
 		DisableNavBar: disableNavBar,
 		Title:         title,
 	}
-}
-
-func readConfig() []models.GitterRepo {
-	yamlFile, err := ioutil.ReadFile("repos.yaml")
-	if err != nil {
-		log.Fatalf("Error reading YAML file: %v", err)
-	}
-
-	var config map[string]map[string][]string
-
-	// Unmarshal YAML into GitterRepoConfig struct
-	err = yaml.Unmarshal(yamlFile, &config)
-	if err != nil {
-		log.Fatalf("Error unmarshalling YAML: %v", err)
-	}
-
-	var gitterRepos []models.GitterRepo
-
-	// Extract information from GitterRepoConfig and create GitterRepo instances
-	for org, repos := range config {
-		for repo, tags := range repos {
-			for _, tag := range tags {
-				gitterRepo := models.GitterRepo{
-					Org:  org,
-					Repo: repo,
-					Tag:  tag,
-				}
-				log.Printf("Found repo in config: %+v\n", gitterRepo)
-				gitterRepos = append(gitterRepos, gitterRepo)
-			}
-		}
-	}
-	return gitterRepos
 }
 
 func home(outDir string) {
@@ -251,12 +197,14 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 
 	pageData := getPageData(fmt.Sprintf("%s/%s", org, repo), false)
 	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
+	log.Printf("fullRepo: '%s'", fullRepo)
+	log.Printf("'%s'", tag)
 	var c *sql.Rows
 	if tag == "" {
-		c, err = db.Query("SELECT t.name, c.\"group\", c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER('$1') AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER('$1') ORDER BY time ASC LIMIT 1);", fullRepo)
+		c, err = db.Query("SELECT t.name, c.'group', c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER($1) ORDER BY time ASC LIMIT 1);", fullRepo)
 	} else {
 		pageData.Title += fmt.Sprintf("@%s", tag)
-		c, err = db.Query("SELECT t.name, c.\"group\", c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER('$1') AND t.name='$2';", fullRepo, tag)
+		c, err = db.Query("SELECT t.name, c.'group', c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2;", fullRepo, tag)
 	}
 	if err != nil {
 		log.Printf("failed to get CRDs for %s : %v", repo, err)
@@ -275,6 +223,11 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 			Version: v,
 			Kind:    k,
 		}
+		// doc(db, outDir, org, repo, tag, g, k, v)
+	}
+	if c.Err() != nil {
+		log.Printf("Error in Next: %s", err)
+		panic(err)
 	}
 	c, err = db.Query("SELECT name FROM tags WHERE LOWER(repo)=LOWER($1) ORDER BY time DESC;", fullRepo)
 	if err != nil {
@@ -313,89 +266,72 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 	log.Printf("successfully rendered org template")
 }
 
-// func doc(w http.ResponseWriter, r *http.Request) {
-// 	var schema *apiextensions.CustomResourceValidation
-// 	crd := &apiextensions.CustomResourceDefinition{}
-// 	log.Printf("Request Received: %s\n", r.URL.Path)
-// 	org, repo, group, kind, version, tag, err := parseGHURL(r.URL.Path)
-// 	if err != nil {
-// 		log.Printf("failed to parse Github path: %v", err)
-// 		fmt.Fprint(w, "Invalid URL.")
-// 		return
-// 	}
-// 	pageData := getPageData(fmt.Sprintf("%s.%s/%s", kind, group, version), false)
-// 	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
-// 	var c pgx.Row
-// 	if tag == "" {
-// 		c = db.QueryRow("SELECT t.name, c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE repo = $1 ORDER BY time DESC LIMIT 1) AND c.group=$2 AND c.version=$3 AND c.kind=$4;", fullRepo, group, version, kind)
-// 	} else {
-// 		c = db.QueryRow("SELECT t.name, c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2 AND c.group=$3 AND c.version=$4 AND c.kind=$5;", fullRepo, tag, group, version, kind)
-// 	}
-// 	foundTag := tag
-// 	if err := c.Scan(&foundTag, crd); err != nil {
-// 		log.Printf("failed to get CRDs for %s : %v", repo, err)
-// 		if err := page.HTML(w, http.StatusOK, "doc", baseData{Page: pageData}); err != nil {
-// 			log.Printf("newTemplate.Execute(): %v", err)
-// 			fmt.Fprint(w, "Unable to render new template.")
-// 		}
-// 	}
-// 	schema = crd.Spec.Validation
-// 	if len(crd.Spec.Versions) > 1 {
-// 		for _, version := range crd.Spec.Versions {
-// 			if version.Storage == true {
-// 				if version.Schema != nil {
-// 					schema = version.Schema
-// 				}
-// 				break
-// 			}
-// 		}
-// 	}
-
-// 	if schema == nil || schema.OpenAPIV3Schema == nil {
-// 		log.Print("CRD schema is nil.")
-// 		fmt.Fprint(w, "Supplied CRD has no schema.")
-// 		return
-// 	}
-
-// 	gvk := crdutil.GetStoredGVK(crd)
-// 	if gvk == nil {
-// 		log.Print("CRD GVK is nil.")
-// 		fmt.Fprint(w, "Supplied CRD has no GVK.")
-// 		return
-// 	}
-
-// 	if err := page.HTML(w, http.StatusOK, "doc", docData{
-// 		Page:        pageData,
-// 		Repo:        strings.Join([]string{org, repo}, "/"),
-// 		Tag:         foundTag,
-// 		Group:       gvk.Group,
-// 		Version:     gvk.Version,
-// 		Kind:        gvk.Kind,
-// 		Description: string(schema.OpenAPIV3Schema.Description),
-// 		Schema:      *schema.OpenAPIV3Schema,
-// 	}); err != nil {
-// 		log.Printf("docTemplate.Execute(): %v", err)
-// 		fmt.Fprint(w, "Supplied CRD has no schema.")
-// 		return
-// 	}
-// 	log.Printf("successfully rendered doc template")
-// }
-
-// TODO(hasheddan): add testing and more reliable parse
-func parseGHURL(uPath string) (org, repo, group, version, kind, tag string, err error) {
-	u, err := url.Parse(uPath)
+func doc(db *sql.DB, outDir string, org string, repo string, tag string, group string, kind string, version string) {
+	fullDir := fmt.Sprintf("%s/%s/%s/%s/%s/%s/%s", outDir, org, repo, tag, group, kind, version)
+	err := os.MkdirAll(fullDir, 0755)
 	if err != nil {
-		return "", "", "", "", "", "", err
-	}
-	elements := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(elements) < 6 {
-		return "", "", "", "", "", "", errors.New("invalid path")
+		log.Println("Error creating output directory:", err)
+		return
 	}
 
-	tagSplit := strings.Split(u.Path, "@")
-	if len(tagSplit) > 1 {
-		tag = tagSplit[1]
+	// Open the file for writing
+	file, err := os.Create(fmt.Sprintf("%s/%s", fullDir, "index.html"))
+	if err != nil {
+		log.Printf("Error creating index.html: %v", err)
+		return
+	}
+	defer file.Close()
+
+	pageData := getPageData(fmt.Sprintf("%s.%s/%s", kind, group, version), false)
+	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
+	var c *sql.Row
+	if tag == "" {
+		c = db.QueryRow("SELECT t.name, c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE repo = $1 ORDER BY time DESC LIMIT 1) AND c.\"group\"=$2 AND c.version=$3 AND c.kind=$4;", fullRepo, group, version, kind)
+	} else {
+		c = db.QueryRow("SELECT t.name, c.data::jsonb FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2 AND c.\"group\"=$3 AND c.version=$4 AND c.kind=$5;", fullRepo, tag, group, version, kind)
+	}
+	foundTag := tag
+	crd := &apiextensions.CustomResourceDefinition{}
+	if err := c.Scan(&foundTag, crd); err != nil {
+		log.Printf("failed to get CRDs for %s : %v", repo, err)
+		panic(err)
+	}
+	var schema *apiextensions.CustomResourceValidation
+	schema = crd.Spec.Validation
+	if len(crd.Spec.Versions) > 1 {
+		for _, version := range crd.Spec.Versions {
+			if version.Storage == true {
+				if version.Schema != nil {
+					schema = version.Schema
+				}
+				break
+			}
+		}
 	}
 
-	return elements[1], elements[2], elements[3], elements[4], strings.Split(elements[5], "@")[0], tag, nil
+	if schema == nil || schema.OpenAPIV3Schema == nil {
+		log.Print("CRD schema is nil.")
+		return
+	}
+
+	gvk := crdutil.GetStoredGVK(crd)
+	if gvk == nil {
+		log.Print("CRD GVK is nil.")
+		return
+	}
+
+	if err := page.HTML(file, http.StatusOK, "doc", docData{
+		Page:        pageData,
+		Repo:        strings.Join([]string{org, repo}, "/"),
+		Tag:         foundTag,
+		Group:       gvk.Group,
+		Version:     gvk.Version,
+		Kind:        gvk.Kind,
+		Description: string(schema.OpenAPIV3Schema.Description),
+		Schema:      *schema.OpenAPIV3Schema,
+	}); err != nil {
+		log.Printf("docTemplate.Execute(): %v", err)
+		return
+	}
+	log.Printf("successfully rendered doc template")
 }
