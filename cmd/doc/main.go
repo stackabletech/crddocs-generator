@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -26,7 +27,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"database/sql"
 
 	// crdutil "github.com/crdsdev/doc/pkg/crd"
 	"github.com/crdsdev/doc/pkg/models"
@@ -127,17 +127,39 @@ func main() {
 
 	//log.Println("Starting Doc server...")
 	//r := mux.NewRouter().StrictSlash(true)
-	// var outDir = "out"
+	var outDir = "out"
+	err = os.MkdirAll(outDir, 0755)
+	if err != nil {
+		log.Println("Error creating output directory:", err)
+		return
+	}
 	// TODO copy over static files
 	// staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir("./static/")))
 
-	var gitterRepos = readConfig()
 
-	home("index.html")
+	home(outDir)
 
-	for _, repo := range gitterRepos {
-		org(db, repo.Org, repo.Repo, repo.Tag)
+	yamlFile, err := ioutil.ReadFile("repos.yaml")
+	if err != nil {
+		log.Fatalf("Error reading YAML file: %v", err)
 	}
+
+	var config map[string]map[string][]string
+
+	err = yaml.Unmarshal(yamlFile, &config)
+	if err != nil {
+		log.Fatalf("Error unmarshalling YAML: %v", err)
+	}
+
+	for orgname, repos := range config {
+		for repo, tags := range repos {
+			org(db, outDir, orgname, repo, "")
+			for _, tag := range tags {
+				org(db, outDir, orgname, repo, tag)
+			}
+		}
+	}
+
 
 	//r.PathPrefix("/static/").Handler(staticHandler)
 	//r.HandleFunc("/github.com/{org}/{repo}@{tag}", org)
@@ -189,9 +211,9 @@ func readConfig() []models.GitterRepo {
 	return gitterRepos
 }
 
-func home(outFile string) {
+func home(outDir string) {
 	// Open the file for writing
-	file, err := os.Create(outFile)
+	file, err := os.Create(fmt.Sprintf("%s/%s", outDir, "index.html"))
 	if err != nil {
 		log.Printf("Error creating index.html: %v", err)
 		return
@@ -207,16 +229,34 @@ func home(outFile string) {
 	log.Print("successfully rendered home page")
 }
 
-func org(db *sql.DB, org string, repo string, tag string) {
+func org(db *sql.DB, outDir string, org string, repo string, tag string) {
+	fullDir := fmt.Sprintf("%s/%s/%s", outDir, org, repo)
+	if tag != "" {
+		fullDir = fmt.Sprintf("%s/%s/%s/%s", outDir, org, repo, tag)
+	}
+	err := os.MkdirAll(fullDir, 0755)
+	if err != nil {
+		log.Println("Error creating output directory:", err)
+		return
+	}
+
+	// Open the file for writing
+	file, err := os.Create(fmt.Sprintf("%s/%s", fullDir, "index.html"))
+	if err != nil {
+		log.Printf("Error creating index.html: %v", err)
+		return
+	}
+	defer file.Close()
+
+
 	pageData := getPageData(fmt.Sprintf("%s/%s", org, repo), false)
 	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
 	var c *sql.Rows
-	var err error
 	if tag == "" {
-		c, err = db.Query("SELECT t.name, c.group, c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER($1) ORDER BY time ASC LIMIT 1);", fullRepo)
+		c, err = db.Query("SELECT t.name, c.\"group\", c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER('$1') AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER('$1') ORDER BY time ASC LIMIT 1);", fullRepo)
 	} else {
 		pageData.Title += fmt.Sprintf("@%s", tag)
-		c, err = db.Query("SELECT t.name, c.group, c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2;", fullRepo, tag)
+		c, err = db.Query("SELECT t.name, c.\"group\", c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER('$1') AND t.name='$2';", fullRepo, tag)
 	}
 	if err != nil {
 		log.Printf("failed to get CRDs for %s : %v", repo, err)
@@ -259,12 +299,6 @@ func org(db *sql.DB, org string, repo string, tag string) {
 	if foundTag == "" {
 		foundTag = tags[0]
 	}
-	file, err := os.Create("org.html")
-	if err != nil {
-		log.Printf("Error creating index.html: %v", err)
-		return
-	}
-	defer file.Close()
 	if err := page.HTML(file, http.StatusOK, "org", orgData{
 		Page:  pageData,
 		Repo:  strings.Join([]string{org, repo}, "/"),
