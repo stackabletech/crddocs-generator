@@ -86,6 +86,7 @@ type orgData struct {
 	Tags  []string
 	CRDs  map[string]models.RepoCRD
 	Total int
+	JsonData string
 }
 
 type homeData struct {
@@ -277,14 +278,26 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 	if foundTag == "" {
 		foundTag = tags[0]
 	}
-	if err := page.HTML(file, http.StatusOK, "org", orgData{
+
+	orgDataTmp := orgData{
 		Page:  pageData,
 		Repo:  strings.Join([]string{org, repo}, "/"),
 		Tag:   foundTag,
 		Tags:  tags,
 		CRDs:  repoCRDs,
 		Total: len(repoCRDs),
-	}); err != nil {
+		JsonData: "",
+	}
+
+	jsonData, err := json.Marshal(orgDataTmp)
+	if err != nil {
+		fmt.Println("Error marshaling JSON:", err)
+		return
+	}
+
+	orgDataTmp.JsonData = string(jsonData)
+
+	if err := page.HTML(file, http.StatusOK, "org", orgDataTmp); err != nil {
 		log.Printf("orgTemplate.Execute(): %v", err)
 		return
 	}
