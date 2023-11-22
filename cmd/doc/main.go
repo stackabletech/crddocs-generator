@@ -13,7 +13,11 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+//go:debug jstmpllitinterp=1
 
+// The go:debug statement above is needed for inserting into JS templates.
+// This is unsafe if the inserted object is external, but it isn't in our case.
+// more info here: https://pkg.go.dev/html/template#hdr-Security_Model
 package main
 
 import (

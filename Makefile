@@ -15,3 +15,7 @@ serve:
 	python -m http.server --directory out
 
 all: doc gitter
+
+clean:
+	rm doc
+	rm gitter
