@@ -1,26 +1,27 @@
 # CRD docs static generator
 
-This is a generator for a static site for CRD documentation.
-It is based on [doc.crds.dev](https://github.com/crdsdev/doc).
+This is a generator for a static site for CRD documentation based on hasheddans work for [doc.crds.dev](https://github.com/crdsdev/doc).
+Thank you very much!
+
 It is customized for our (Stackable) repositories.
 
-## Generating the site
+## Generating docs
 
-run `make all`.
+Have a look at https://github.com/stackabletech/crddocs for sample usage.
+To generate docs you need a yaml configuration file specifying which repos and tags to document.
+It should look like this (organization > repo > tag):
 
-This will build the two go files `gitter` and `doc`, initialize a `doc.db` SQLite3 database, run the two tools and copy over static files into the `out` directory. This is the directory containing the final site.
+    stackabletech:
+    airflow-operator:
+        - "23.7.0"
+        - "23.4.0"
+        - "23.1.0"
+    druid-operator:
+        - "23.7.0"
+        ...
+    ...
 
-## Demo serve
+You also need a HTML file template and a directory of static files.
 
-You can run `make serve` if you have `python` installed, to serve the `out` directory.
-
-## Changing the repos and tags that are generated
-
-The file `repos.yaml` contains the repos that are generated, as well as the tags to index for each repo.
-Update this file to change the repos and tags that you want.
-
-Additionally the `template/home.html` file contains a menu of hardcoded repo names. If a repo is added or removed, update this list too.
-
-## TODO
-
-License?
+Then, use the `build-site.sh` shell script to build your site.
+It contains more instructions on the required arguments.

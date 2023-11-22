@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This is a script intended to be run ...
+# To run this script you need a config file with your repositories,
+# a directory with an HTML template, and a directory of static files to be
+# copied over.
+#
+# You also need go installed. You don't need to pre-build the binaries, 
+# but you can do so with `make all`.
 #
 # args:
 # - repos.yaml config file
