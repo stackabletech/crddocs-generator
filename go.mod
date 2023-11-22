@@ -14,9 +14,8 @@ require (
 	github.com/prometheus/client_golang v1.1.0 // indirect
 	github.com/stretchr/testify v1.5.1 // indirect
 	github.com/unrolled/render v1.0.3
-	golang.org/x/net v0.0.0-20201202161906-c7110b5ffcbb // indirect
 	golang.org/x/oauth2 v0.0.0-20201109201403-9fd604954f58 // indirect
-	golang.org/x/text v0.3.4 // indirect
+	golang.org/x/text v0.3.8 // indirect
 	google.golang.org/genproto v0.0.0-20201109203340-2640f1f9cdfb // indirect
 	google.golang.org/grpc v1.33.2 // indirect
 	gopkg.in/square/go-jose.v2 v2.2.2
