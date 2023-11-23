@@ -192,7 +192,7 @@ func home(outDir string) {
 		return
 	}
 	defer file.Close()
-	data := homeData{Page: getPageData("Doc", true)}
+	data := homeData{Page: getPageData("Doc", false)}
 
 	if err := page.HTML(file, http.StatusOK, "home", data); err != nil {
 		log.Printf("homeTemplate.Execute(): %v", err)
