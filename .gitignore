@@ -2,5 +2,5 @@ deploy/dns
 *.rdb
 cloudsql.json
 // binaries
-doc
-gitter
+/doc
+/gitter
