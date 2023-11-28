@@ -34,7 +34,6 @@ import (
 	"github.com/crdsdev/doc/pkg/models"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/pkg/errors"
 	"gopkg.in/square/go-jose.v2/json"
 	_ "github.com/mattn/go-sqlite3"
 	yaml "gopkg.in/yaml.v3"
@@ -174,81 +173,54 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 		Depth:             1,
 		Progress:          os.Stdout,
 		RecurseSubmodules: git.NoRecurseSubmodules,
+		ReferenceName:     plumbing.NewTagReferenceName(gRepo.Tag),
+		SingleBranch:      true,
 	}
-	if gRepo.Tag != "" {
-		cloneOpts.ReferenceName = plumbing.NewTagReferenceName(gRepo.Tag)
-		cloneOpts.SingleBranch = true
+	if gRepo.Tag == "nightly" {
+		cloneOpts.ReferenceName = plumbing.NewBranchReferenceName("main")
 	}
 	repo, err := git.PlainClone(dir, false, cloneOpts)
 	if err != nil {
+		log.Printf("Failed to clone repo: %v", err)
 		return err
 	}
-	iter, err := repo.Tags()
-	if err != nil {
+	h, err := repo.ResolveRevision(plumbing.Revision("HEAD"))
+	if err != nil || h == nil {
+		log.Printf("Unable to resolve revision: %s (%v)", gRepo.Tag, err)
+		return err
+	}
+	c, err := repo.CommitObject(*h)
+	if err != nil || c == nil {
+		log.Printf("Unable to resolve revision: %s (%v)", gRepo.Tag, err)
+		return err
+	}
+	time := c.Committer.When
+	if gRepo.Tag == "nightly" {
+		time = time.AddDate(-50, 0, 0)  // backdate the nightly so it comes last in the sorting
+	}
+	var tagID int
+	r := g.db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", gRepo.Tag, fullRepo, time)
+	if err := r.Scan(&tagID); err != nil {
 		return err
 	}
 	w, err := repo.Worktree()
 	if err != nil {
+		log.Printf("Failed to get worktree: %v", err)
 		return err
 	}
-	// Get CRDs for each tag
-	tags := []tag{}
-	if err := iter.ForEach(func(obj *plumbing.Reference) error {
-		if gRepo.Tag == "" {
-			tags = append(tags, tag{
-				hash: obj.Hash(),
-				name: obj.Name().Short(),
-			})
-			return nil
-		}
-		if obj.Name().Short() == gRepo.Tag {
-			tags = append(tags, tag{
-				hash: obj.Hash(),
-				name: obj.Name().Short(),
-			})
-			iter.Close()
-		}
-		return nil
-	}); err != nil {
-		log.Println(err)
+	repoCRDs, err := getCRDsFromTag(dir, w)
+	if err != nil {
+		log.Printf("Unable to get CRDs: %s@%s (%v)", repo, gRepo.Tag, err)
+		return err
 	}
-	for _, t := range tags {
-		h, err := repo.ResolveRevision(plumbing.Revision(t.hash.String()))
-		if err != nil || h == nil {
-			log.Printf("Unable to resolve revision: %s (%v)", t.hash.String(), err)
-			continue
+	log.Printf("Found %d CRDs", len(repoCRDs))
+	if len(repoCRDs) > 0 {
+		allArgs := make([]interface{}, 0, len(repoCRDs)*crdArgCount)
+		for _, crd := range repoCRDs {
+			allArgs = append(allArgs, crd.Group, crd.Version, crd.Kind, tagID, crd.Filename, crd.CRD)
 		}
-		c, err := repo.CommitObject(*h)
-		if err != nil || c == nil {
-			log.Printf("Unable to resolve revision: %s (%v)", t.hash.String(), err)
-			continue
-		}
-		log.Println("QueryRow")
-		r := g.db.QueryRow("SELECT id FROM tags WHERE name=$1 AND repo=$2", t.name, fullRepo)
-		var tagID int
-		if err := r.Scan(&tagID); err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("Got an error")
-				return err
-			}
-			r := g.db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", t.name, fullRepo, c.Committer.When)
-			if err := r.Scan(&tagID); err != nil {
-				return err
-			}
-		}
-		repoCRDs, err := getCRDsFromTag(dir, t.name, h, w)
-		if err != nil {
-			log.Printf("Unable to get CRDs: %s@%s (%v)", repo, t.name, err)
-			continue
-		}
-		if len(repoCRDs) > 0 {
-			allArgs := make([]interface{}, 0, len(repoCRDs)*crdArgCount)
-			for _, crd := range repoCRDs {
-				allArgs = append(allArgs, crd.Group, crd.Version, crd.Kind, tagID, crd.Filename, crd.CRD)
-			}
-			if _, err := g.db.Exec(buildInsert("INSERT INTO crds(\"group\", version, kind, tag_id, filename, data) VALUES ", crdArgCount, len(repoCRDs))+"ON CONFLICT DO NOTHING", allArgs...); err != nil {
-				return err
-			}
+		if _, err := g.db.Exec(buildInsert("INSERT INTO crds(\"group\", version, kind, tag_id, filename, data) VALUES ", crdArgCount, len(repoCRDs))+"ON CONFLICT DO NOTHING", allArgs...); err != nil {
+			return err
 		}
 	}
 
@@ -257,35 +229,26 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 	return nil
 }
 
-func getCRDsFromTag(dir string, tag string, hash *plumbing.Hash, w *git.Worktree) (map[string]models.RepoCRD, error) {
-	err := w.Checkout(&git.CheckoutOptions{
-		Hash:  *hash,
-		Force: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := w.Reset(&git.ResetOptions{
-		Mode: git.HardReset,
-	}); err != nil {
-		return nil, err
-	}
+func getCRDsFromTag(dir string, w *git.Worktree) (map[string]models.RepoCRD, error) {
 	reg := regexp.MustCompile("kind: CustomResourceDefinition")
-	regPath := regexp.MustCompile(`^.*\.yaml`)
+	regPath := regexp.MustCompile(`^deploy/helm/.*\.yaml`)
 	g, _ := w.Grep(&git.GrepOptions{
 		Patterns:  []*regexp.Regexp{reg},
 		PathSpecs: []*regexp.Regexp{regPath},
 	})
 	repoCRDs := map[string]models.RepoCRD{}
 	files := getYAMLs(g, dir)
+	log.Printf("found files: %d", len(files))
 	for file, yamls := range files {
 		for _, y := range yamls {
 			crder, err := crd.NewCRDer(y, crd.StripLabels(), crd.StripAnnotations(), crd.StripConversion())
 			if err != nil || crder.CRD == nil {
+				log.Printf("error: %v", err)
 				continue
 			}
 			cbytes, err := json.Marshal(crder.CRD)
 			if err != nil {
+				log.Printf("Error marshalling: %v", err)
 				continue
 			}
 			repoCRDs[crd.PrettyGVK(crder.GVK)] = models.RepoCRD{
@@ -327,7 +290,7 @@ func splitYAML(file []byte, filename string) ([][]byte, error) {
 	defer func() {
 		if err := recover(); err != nil {
 			yamls = make([][]byte, 0)
-			err = fmt.Errorf("panic while processing yaml file: %w", err)
+			err = fmt.Errorf("panic while processing yaml file: %v", err)
 		}
 	}()
 
