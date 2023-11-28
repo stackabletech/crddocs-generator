@@ -10,7 +10,6 @@ require (
 	github.com/hashicorp/golang-lru v0.5.3 // indirect
 	github.com/imdario/mergo v0.3.7 // indirect
 	github.com/mattn/go-sqlite3 v1.14.18
-	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.1.0 // indirect
 	github.com/stretchr/testify v1.5.1 // indirect
 	github.com/unrolled/render v1.0.3
