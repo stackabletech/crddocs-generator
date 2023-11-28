@@ -184,12 +184,7 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 		log.Printf("Failed to clone repo: %v", err)
 		return err
 	}
-	w, err := repo.Worktree()
-	if err != nil {
-		log.Printf("Failed to get worktree: %v", err)
-		return err
-	}
-	h, err := repo.ResolveRevision(plumbing.Revision(gRepo.Tag))
+	h, err := repo.ResolveRevision(plumbing.Revision("HEAD"))
 	if err != nil || h == nil {
 		log.Printf("Unable to resolve revision: %s (%v)", gRepo.Tag, err)
 		return err
@@ -199,15 +194,18 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 		log.Printf("Unable to resolve revision: %s (%v)", gRepo.Tag, err)
 		return err
 	}
-	name := gRepo.Tag
 	time := c.Committer.When
 	if gRepo.Tag == "nightly" {
 		time = time.AddDate(-50, 0, 0)  // backdate the nightly so it comes last in the sorting
-		name = "nightly"
 	}
 	var tagID int
-	r := g.db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", name, fullRepo, time)
+	r := g.db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", gRepo.Tag, fullRepo, time)
 	if err := r.Scan(&tagID); err != nil {
+		return err
+	}
+	w, err := repo.Worktree()
+	if err != nil {
+		log.Printf("Failed to get worktree: %v", err)
 		return err
 	}
 	repoCRDs, err := getCRDsFromTag(dir, w)
@@ -233,7 +231,7 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 
 func getCRDsFromTag(dir string, w *git.Worktree) (map[string]models.RepoCRD, error) {
 	reg := regexp.MustCompile("kind: CustomResourceDefinition")
-	regPath := regexp.MustCompile(`^.*\.yaml`)
+	regPath := regexp.MustCompile(`^deploy/helm/.*\.yaml`)
 	g, _ := w.Grep(&git.GrepOptions{
 		Patterns:  []*regexp.Regexp{reg},
 		PathSpecs: []*regexp.Regexp{regPath},
