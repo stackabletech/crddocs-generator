@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	servervalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
@@ -113,7 +114,11 @@ func convertV1ToInternal(data []byte, internal *apiextensions.CustomResourceDefi
 	}
 	errList := validation.ValidateCustomResourceDefinition(internal, v1.SchemeGroupVersion)
 	if len(errList) > 0 {
-		return errors.New(errList.ToAggregate().Error())
+		for _, e := range errList {
+			log.Printf("WARNING: %v", e)
+		}
+		// Do not raise an error, we just print the validation results.
+		// return errors.New(errList.ToAggregate().Error())
 	}
 
 	return nil
