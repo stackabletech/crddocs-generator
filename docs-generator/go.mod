@@ -1,4 +1,4 @@
-module github.com/crdsdev/doc
+module docs-generator
 
 go 1.13
 
