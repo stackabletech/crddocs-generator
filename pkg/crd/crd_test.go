@@ -17,6 +17,8 @@ limitations under the License.
 package crd
 
 import (
+	"log"
+	"os"
 	"testing"
 )
 
@@ -341,13 +343,33 @@ specTemplate:
   reclaimPolicy: Delete
 `)
 
+type testCase = struct {
+	name        string
+	crd         []byte
+	instance    []byte
+	expectedErr bool
+}
+
 func TestValidate(t *testing.T) {
-	cases := []struct {
-		name        string
-		crd         []byte
-		instance    []byte
-		expectedErr bool
-	}{
+	// prepare stackable case
+	stackableCrd, e := os.ReadFile("stackablecrd.yaml")
+	if e != nil {
+		log.Panicln("Failed to read test file", e)
+	}
+
+	var stackableExample = []byte(`
+  apiVersion: example.com/v1
+  kind: CronTab
+  metadata:
+    name: my-new-cron-object
+    namespace: hi
+  # credentialsSecret left blank, although required
+  port: a
+  host: a
+  `)
+	// /stackable case
+
+	cases := []testCase{
 		{
 			name:        "v1 invalid",
 			crd:         v1crd,
@@ -366,6 +388,12 @@ func TestValidate(t *testing.T) {
 			instance:    b,
 			expectedErr: false,
 		},
+		{
+			name:        "stackable valid",
+			crd:         stackableCrd,
+			instance:    stackableExample,
+			expectedErr: false,
+		},
 	}
 
 	for _, tc := range cases {
@@ -377,7 +405,6 @@ func TestValidate(t *testing.T) {
 			if err := c.Validate(tc.instance); err != nil && !tc.expectedErr {
 				t.Errorf("Unexpected validation error: %s", err)
 			}
-
 		})
 	}
 }

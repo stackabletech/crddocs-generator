@@ -18,3 +18,6 @@ gitter:
 clean:
 	rm doc
 	rm gitter
+
+test:
+	go test ./...
