@@ -52,7 +52,7 @@ func NewCRDer(data []byte, m ...Modifier) (*CRDer, error) {
 	internal := &apiextensions.CustomResourceDefinition{}
 	if errV1Beta1 := convertV1Beta1ToInternal(data, internal, m...); errV1Beta1 != nil {
 		if errV1 := convertV1ToInternal(data, internal, m...); errV1 != nil {
-			return nil, fmt.Errorf("conversion unsuccessful: %s, %s", errV1Beta1, errV1)
+			return nil, fmt.Errorf("conversion unsuccessful:\n\n V1BETA: %s \n\n V1: %s", errV1Beta1, errV1)
 		}
 	}
 
