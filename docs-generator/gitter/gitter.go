@@ -83,7 +83,6 @@ func main() {
 	for repo, tags := range conf.Repos {
 		for _, tag := range tags {
 			gitterRepo := models.GitterRepo{
-				Org:  "stackabletech", // TODO maybe we could remove this entirely?
 				Repo: repo,
 				Tag:  tag,
 			}
@@ -93,7 +92,6 @@ func main() {
 	}
 
 	for _, repo := range gitterRepos {
-		fmt.Printf("Indexing repo: %+v\n", repo)
 		// Call the Index method on the Gitter instance
 		var replyString string
 		err = gitter.Index(repo, &replyString)
@@ -114,18 +112,17 @@ type Gitter struct {
 
 // Index indexes a git repo at the specified url.
 func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
-	log.Printf("Indexing repo %s/%s...\n", gRepo.Org, gRepo.Repo)
+	log.Printf("Indexing repo %s...\n", gRepo.Repo)
 
 	dir, err := os.MkdirTemp(os.TempDir(), "doc-gitter")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", strings.ToLower(gRepo.Org), strings.ToLower(gRepo.Repo))
 	cloneOpts := &git.CloneOptions{
-		URL:               fmt.Sprintf("https://%s", fullRepo),
+		URL:               fmt.Sprintf("https://github.com/stackabletech/%s", strings.ToLower(gRepo.Repo)),
 		Depth:             1,
-		Progress:          os.Stdout,
+		Progress:          nil, // suppress progress output as it clogs up stdout otherwise
 		RecurseSubmodules: git.NoRecurseSubmodules,
 		ReferenceName:     plumbing.NewTagReferenceName(gRepo.Tag),
 		SingleBranch:      true,
@@ -153,7 +150,7 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 		time = time.AddDate(-50, 0, 0) // backdate the nightly so it comes last in the sorting
 	}
 	var tagID int
-	r := g.db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", gRepo.Tag, fullRepo, time)
+	r := g.db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", gRepo.Tag, gRepo.Repo, time)
 	if err := r.Scan(&tagID); err != nil {
 		return err
 	}
@@ -178,7 +175,7 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 		}
 	}
 
-	log.Printf("Finished indexing %s/%s\n", gRepo.Org, gRepo.Repo)
+	log.Printf("Finished indexing %s\n", gRepo.Repo)
 
 	return nil
 }
