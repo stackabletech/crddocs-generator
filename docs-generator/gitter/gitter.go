@@ -26,7 +26,6 @@ import (
 	"os"
 	"path"
 	"regexp"
-	"strings"
 
 	"docs-generator/pkg/config"
 	"docs-generator/pkg/crd"
@@ -60,108 +59,84 @@ func main() {
 		os.Exit(1)
 	}
 
+	// open database
 	db, err := sql.Open("sqlite3", dbFile)
 	if err != nil {
 		panic(err)
 	}
 
-	gitter := &Gitter{
-		db: db,
-	}
-
+	// read config
 	var conf config.Config
-
 	err = conf.NewConfigFromFile(configFile)
 	if err != nil {
 		log.Fatalf("Error loading config: %s: %v", configFile, err)
 		panic(err)
 	}
 
-	var gitterRepos []models.GitterRepo
-
-	// Extract information from GitterRepoConfig and create GitterRepo instances
+	// index repos
 	for repo, tags := range conf.Repos {
+		log.Printf("Indexing repo %s ...\n", repo)
 		for _, tag := range tags {
-			gitterRepo := models.GitterRepo{
-				Repo: repo,
-				Tag:  tag,
+			log.Printf("... at tag: %s ...\n", tag)
+			err = Index(db, repo, tag)
+			// Check for errors
+			if err != nil {
+				fmt.Println("Error:", err)
 			}
-			log.Printf("Found repo in config: %+v\n", gitterRepo)
-			gitterRepos = append(gitterRepos, gitterRepo)
 		}
 	}
-
-	for _, repo := range gitterRepos {
-		// Call the Index method on the Gitter instance
-		var replyString string
-		err = gitter.Index(repo, &replyString)
-
-		// Check for errors
-		if err != nil {
-			fmt.Println("Error:", err)
-		} else {
-			fmt.Println("Reply:", replyString)
-		}
-	}
-}
-
-// Gitter indexes git repos.
-type Gitter struct {
-	db *sql.DB
 }
 
 // Index indexes a git repo at the specified url.
-func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
-	log.Printf("Indexing repo %s...\n", gRepo.Repo)
-
+func Index(db *sql.DB, repo string, tag string) error {
 	dir, err := os.MkdirTemp(os.TempDir(), "doc-gitter")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
 	cloneOpts := &git.CloneOptions{
-		URL:               fmt.Sprintf("https://github.com/stackabletech/%s", strings.ToLower(gRepo.Repo)),
+		URL:               fmt.Sprintf("https://github.com/stackabletech/%s", repo),
 		Depth:             1,
 		Progress:          nil, // suppress progress output as it clogs up stdout otherwise
 		RecurseSubmodules: git.NoRecurseSubmodules,
-		ReferenceName:     plumbing.NewTagReferenceName(gRepo.Tag),
+		ReferenceName:     plumbing.NewTagReferenceName(tag),
 		SingleBranch:      true,
 	}
-	if gRepo.Tag == "nightly" {
+	if tag == "nightly" {
 		cloneOpts.ReferenceName = plumbing.NewBranchReferenceName("main")
 	}
-	repo, err := git.PlainClone(dir, false, cloneOpts)
+	gitRepo, err := git.PlainClone(dir, false, cloneOpts)
 	if err != nil {
 		log.Printf("Failed to clone repo: %v", err)
 		return err
 	}
-	h, err := repo.ResolveRevision(plumbing.Revision("HEAD"))
+	h, err := gitRepo.ResolveRevision(plumbing.Revision("HEAD"))
 	if err != nil || h == nil {
-		log.Printf("Unable to resolve revision: %s (%v)", gRepo.Tag, err)
+		log.Printf("Unable to resolve revision: %s (%v)", tag, err)
 		return err
 	}
-	c, err := repo.CommitObject(*h)
+	c, err := gitRepo.CommitObject(*h)
 	if err != nil || c == nil {
-		log.Printf("Unable to resolve revision: %s (%v)", gRepo.Tag, err)
+		log.Printf("Unable to resolve revision: %s (%v)", tag, err)
 		return err
 	}
 	time := c.Committer.When
-	if gRepo.Tag == "nightly" {
+	if tag == "nightly" {
 		time = time.AddDate(-50, 0, 0) // backdate the nightly so it comes last in the sorting
 	}
 	var tagID int
-	r := g.db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", gRepo.Tag, gRepo.Repo, time)
+	r := db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", tag, repo, time)
 	if err := r.Scan(&tagID); err != nil {
 		return err
 	}
-	w, err := repo.Worktree()
+	w, err := gitRepo.Worktree()
 	if err != nil {
 		log.Printf("Failed to get worktree: %v", err)
 		return err
 	}
 	repoCRDs, err := getCRDsFromTag(dir, w)
 	if err != nil {
-		log.Printf("Unable to get CRDs: %s@%s (%v)", repo, gRepo.Tag, err)
+		log.Printf("Unable to get CRDs: %s@%s (%v)", repo, tag, err)
 		return err
 	}
 	log.Printf("Found %d CRDs", len(repoCRDs))
@@ -170,12 +145,10 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 		for _, crd := range repoCRDs {
 			allArgs = append(allArgs, crd.Group, crd.Version, crd.Kind, tagID, crd.Filename, crd.CRD)
 		}
-		if _, err := g.db.Exec(buildInsert("INSERT INTO crds(\"group\", version, kind, tag_id, filename, data) VALUES ", crdArgCount, len(repoCRDs))+"ON CONFLICT DO NOTHING", allArgs...); err != nil {
+		if _, err := db.Exec(buildInsert("INSERT INTO crds(\"group\", version, kind, tag_id, filename, data) VALUES ", crdArgCount, len(repoCRDs))+"ON CONFLICT DO NOTHING", allArgs...); err != nil {
 			return err
 		}
 	}
-
-	log.Printf("Finished indexing %s\n", gRepo.Repo)
 
 	return nil
 }

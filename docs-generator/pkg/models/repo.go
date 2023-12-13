@@ -25,9 +25,3 @@ type RepoCRD struct {
 	Kind     string
 	CRD      []byte
 }
-
-// GitterRepo is the repo for gitter to index.
-type GitterRepo struct {
-	Repo string
-	Tag  string
-}
