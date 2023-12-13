@@ -26,19 +26,18 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 
+	"docs-generator/pkg/config"
 	crdutil "docs-generator/pkg/crd"
 	"docs-generator/pkg/models"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/unrolled/render"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
-	"sigs.k8s.io/yaml"
 )
 
 // redis connection
@@ -153,35 +152,25 @@ func main() {
 		},
 	})
 
-	versions := []string{"23.11.0", "nightly"}
-
-	// generate landing page
-	home(db, outDir, "", versions)
-
-	for _, v := range versions {
-		home(db, outDir, v, versions)
+	// read config
+	var conf config.Config
+	err = conf.NewConfigFromFile(configFile)
+	if err != nil {
+		log.Fatalf("Error loading config: %s: %v", configFile, err)
+		panic(err)
 	}
 
-	// read config file
-	yamlFile, err := ioutil.ReadFile(configFile)
-	if err != nil {
-		log.Fatalf("Error reading YAML file: %v", err)
-	}
-
-	var config map[string]map[string][]string
-
-	err = yaml.Unmarshal(yamlFile, &config)
-	if err != nil {
-		log.Fatalf("Error unmarshalling YAML: %v", err)
+	// generate landing page(s)
+	home(db, outDir, "", conf.PlatformVersions)
+	for _, v := range conf.PlatformVersions {
+		home(db, outDir, v, conf.PlatformVersions)
 	}
 
 	// generate doc pages for all repos and CRDs
-	for orgname, repos := range config {
-		for repo, tags := range repos {
-			org(db, outDir, orgname, repo, "")
-			for _, tag := range tags {
-				org(db, outDir, orgname, repo, tag)
-			}
+	for repo, tags := range conf.Repos {
+		org(db, outDir, "stackabletech", repo, "")
+		for _, tag := range tags {
+			org(db, outDir, "stackabletech", repo, tag)
 		}
 	}
 }
@@ -339,8 +328,11 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 		}
 		tags = append(tags, t)
 	}
-	if len(tags) == 0 || (!tagExists && tag != "") {
-		panic("This shouldn't happend!")
+	if len(tags) == 0 {
+		panic("This shouldn't happen, there are no tags!")
+	}
+	if !tagExists && tag != "" {
+		panic("This shouldn't happend, the tag doesn't exist!")
 	}
 	if foundTag == "" {
 		foundTag = tags[0]
@@ -348,7 +340,7 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 
 	orgDataTmp := orgData{
 		Page:     pageData,
-		Repo:     strings.Join([]string{org, repo}, "/"),
+		Repo:     repo,
 		Tag:      foundTag,
 		Tags:     tags,
 		CRDs:     repoCRDs,
