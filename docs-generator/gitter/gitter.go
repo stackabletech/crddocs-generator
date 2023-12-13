@@ -22,13 +22,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path"
 	"regexp"
 	"strings"
 
+	"docs-generator/pkg/config"
 	"docs-generator/pkg/crd"
 	"docs-generator/pkg/models"
 
@@ -69,38 +69,29 @@ func main() {
 		db: db,
 	}
 
-	yamlFile, err := ioutil.ReadFile(configFile)
-	if err != nil {
-		log.Fatalf("Error reading YAML file: %v", err)
-	}
+	var conf config.Config
 
-	var config map[string]map[string][]string
-
-	// Unmarshal YAML into GitterRepoConfig struct
-	err = yaml.Unmarshal(yamlFile, &config)
+	err = conf.NewConfigFromFile(configFile)
 	if err != nil {
-		log.Fatalf("Error unmarshalling YAML: %v", err)
+		log.Fatalf("Error loading config: %s: %v", configFile, err)
+		panic(err)
 	}
 
 	var gitterRepos []models.GitterRepo
 
 	// Extract information from GitterRepoConfig and create GitterRepo instances
-	for org, repos := range config {
-		for repo, tags := range repos {
-			for _, tag := range tags {
-				gitterRepo := models.GitterRepo{
-					Org:  org,
-					Repo: repo,
-					Tag:  tag,
-				}
-				log.Printf("Found repo in config: %+v\n", gitterRepo)
-				gitterRepos = append(gitterRepos, gitterRepo)
+	for repo, tags := range conf.Repos {
+		for _, tag := range tags {
+			gitterRepo := models.GitterRepo{
+				Repo: repo,
+				Tag:  tag,
 			}
+			log.Printf("Found repo in config: %+v\n", gitterRepo)
+			gitterRepos = append(gitterRepos, gitterRepo)
 		}
 	}
 
 	for _, repo := range gitterRepos {
-		fmt.Printf("Indexing repo: %+v\n", repo)
 		// Call the Index method on the Gitter instance
 		var replyString string
 		err = gitter.Index(repo, &replyString)
@@ -121,18 +112,17 @@ type Gitter struct {
 
 // Index indexes a git repo at the specified url.
 func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
-	log.Printf("Indexing repo %s/%s...\n", gRepo.Org, gRepo.Repo)
+	log.Printf("Indexing repo %s...\n", gRepo.Repo)
 
-	dir, err := ioutil.TempDir(os.TempDir(), "doc-gitter")
+	dir, err := os.MkdirTemp(os.TempDir(), "doc-gitter")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", strings.ToLower(gRepo.Org), strings.ToLower(gRepo.Repo))
 	cloneOpts := &git.CloneOptions{
-		URL:               fmt.Sprintf("https://%s", fullRepo),
+		URL:               fmt.Sprintf("https://github.com/stackabletech/%s", strings.ToLower(gRepo.Repo)),
 		Depth:             1,
-		Progress:          os.Stdout,
+		Progress:          nil, // suppress progress output as it clogs up stdout otherwise
 		RecurseSubmodules: git.NoRecurseSubmodules,
 		ReferenceName:     plumbing.NewTagReferenceName(gRepo.Tag),
 		SingleBranch:      true,
@@ -160,7 +150,7 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 		time = time.AddDate(-50, 0, 0) // backdate the nightly so it comes last in the sorting
 	}
 	var tagID int
-	r := g.db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", gRepo.Tag, fullRepo, time)
+	r := g.db.QueryRow("INSERT INTO tags(name, repo, time) VALUES ($1, $2, $3) RETURNING id", gRepo.Tag, gRepo.Repo, time)
 	if err := r.Scan(&tagID); err != nil {
 		return err
 	}
@@ -185,7 +175,7 @@ func (g *Gitter) Index(gRepo models.GitterRepo, reply *string) error {
 		}
 	}
 
-	log.Printf("Finished indexing %s/%s\n", gRepo.Org, gRepo.Repo)
+	log.Printf("Finished indexing %s\n", gRepo.Repo)
 
 	return nil
 }
@@ -228,7 +218,7 @@ func getCRDsFromTag(dir string, w *git.Worktree) (map[string]models.RepoCRD, err
 func getYAMLs(greps []git.GrepResult, dir string) map[string][][]byte {
 	allCRDs := map[string][][]byte{}
 	for _, res := range greps {
-		b, err := ioutil.ReadFile(dir + "/" + res.FileName)
+		b, err := os.ReadFile(dir + "/" + res.FileName)
 		if err != nil {
 			log.Printf("failed to read CRD file: %s", res.FileName)
 			continue

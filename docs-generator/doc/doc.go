@@ -26,19 +26,17 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
+	"docs-generator/pkg/config"
 	crdutil "docs-generator/pkg/crd"
 	"docs-generator/pkg/models"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/unrolled/render"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
-	"sigs.k8s.io/yaml"
 )
 
 // redis connection
@@ -63,7 +61,6 @@ type pageData struct {
 
 type docData struct {
 	Page        pageData
-	Repo        string
 	Tag         string
 	At          string
 	Group       string
@@ -84,9 +81,20 @@ type orgData struct {
 	JsonData string
 }
 
+type homeRow struct {
+	Repo      string
+	RepoShort string
+	Group     string
+	Version   string
+	Kind      string
+}
+
 type homeData struct {
-	Page  pageData
-	Repos []string
+	Page             pageData
+	Tag              string
+	PlatformVersions []string
+	Rows             []homeRow
+	JsonData         string
 }
 
 var page *render.Render
@@ -142,29 +150,25 @@ func main() {
 		},
 	})
 
-	// generate landing page
-	home(outDir)
-
-	// read config file
-	yamlFile, err := ioutil.ReadFile(configFile)
+	// read config
+	var conf config.Config
+	err = conf.NewConfigFromFile(configFile)
 	if err != nil {
-		log.Fatalf("Error reading YAML file: %v", err)
+		log.Fatalf("Error loading config: %s: %v", configFile, err)
+		panic(err)
 	}
 
-	var config map[string]map[string][]string
-
-	err = yaml.Unmarshal(yamlFile, &config)
-	if err != nil {
-		log.Fatalf("Error unmarshalling YAML: %v", err)
+	// generate landing page(s)
+	home(db, outDir, "", conf.PlatformVersions)
+	for _, v := range conf.PlatformVersions {
+		home(db, outDir, v, conf.PlatformVersions)
 	}
 
 	// generate doc pages for all repos and CRDs
-	for orgname, repos := range config {
-		for repo, tags := range repos {
-			org(db, outDir, orgname, repo, "")
-			for _, tag := range tags {
-				org(db, outDir, orgname, repo, tag)
-			}
+	for repo, tags := range conf.Repos {
+		org(db, outDir, repo, "")
+		for _, tag := range tags {
+			org(db, outDir, repo, tag)
 		}
 	}
 }
@@ -179,27 +183,81 @@ func getPageData(title string, disableNavBar bool) pageData {
 	}
 }
 
-func home(outDir string) {
+func fetchHomeRows(db *sql.DB, version string) []homeRow {
+	c, err := db.Query("SELECT tags.repo, crds.\"group\", crds.version, crds.kind FROM crds JOIN tags ON crds.tag_id = tags.id WHERE tags.name = $1 ORDER BY crds.kind;", version)
+	if err != nil {
+		log.Printf("failed to get crds for %s: %v", version, err)
+		panic(err) // something went wrong, there should be CRDs
+	}
+	rows := []homeRow{}
+	for c.Next() {
+		var r, g, v, k string
+		if err := c.Scan(&r, &g, &v, &k); err != nil {
+			log.Printf("newTemplate.Execute(): %v", err)
+		}
+		rows = append(rows, homeRow{
+			Repo:    r,
+			Group:   g,
+			Version: v,
+			Kind:    k,
+		})
+	}
+	if c.Err() != nil {
+		log.Printf("Error in Next: %s", err)
+		panic(err)
+	}
+	return rows
+}
+
+func home(db *sql.DB, outDir string, version string, versions []string) {
+	fullDir := outDir
+	if version != "" {
+		fullDir = fmt.Sprintf("%s/%s", outDir, version)
+	}
+	err := os.MkdirAll(fullDir, 0755)
+	if err != nil {
+		log.Println("Error creating output directory:", err)
+		return
+	}
 	// Open the file for writing
-	file, err := os.Create(fmt.Sprintf("%s/%s", outDir, "index.html"))
+	file, err := os.Create(fmt.Sprintf("%s/%s", fullDir, "index.html"))
 	if err != nil {
 		log.Printf("Error creating index.html: %v", err)
 		return
 	}
 	defer file.Close()
-	data := homeData{Page: getPageData("Doc", false)}
 
-	if err := page.HTML(file, http.StatusOK, "home", data); err != nil {
+	if version == "" {
+		version = versions[0]
+	}
+
+	dataTmp := homeData{
+		Page:             getPageData("Doc", false),
+		Tag:              version,
+		PlatformVersions: versions,
+		Rows:             fetchHomeRows(db, version),
+		JsonData:         "",
+	}
+
+	jsonData, err := json.Marshal(dataTmp)
+	if err != nil {
+		fmt.Println("Error marshaling JSON:", err)
+		return
+	}
+
+	dataTmp.JsonData = string(jsonData)
+
+	if err := page.HTML(file, http.StatusOK, "home", dataTmp); err != nil {
 		log.Printf("homeTemplate.Execute(): %v", err)
 		return
 	}
 	log.Print("successfully rendered home page")
 }
 
-func org(db *sql.DB, outDir string, org string, repo string, tag string) {
-	fullDir := fmt.Sprintf("%s/%s/%s", outDir, org, repo)
+func org(db *sql.DB, outDir string, repo string, tag string) {
+	fullDir := fmt.Sprintf("%s/%s", outDir, repo)
 	if tag != "" {
-		fullDir = fmt.Sprintf("%s/%s/%s/%s", outDir, org, repo, tag)
+		fullDir = fmt.Sprintf("%s/%s/%s", outDir, repo, tag)
 	}
 	err := os.MkdirAll(fullDir, 0755)
 	if err != nil {
@@ -215,14 +273,13 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 	}
 	defer file.Close()
 
-	pageData := getPageData(fmt.Sprintf("%s/%s", org, repo), false)
-	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
+	pageData := getPageData(repo, false)
 	var c *sql.Rows
 	if tag == "" {
-		c, err = db.Query("SELECT t.name, c.'group', c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER($1) ORDER BY time DESC LIMIT 1);", fullRepo)
+		c, err = db.Query("SELECT t.name, c.'group', c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE LOWER(repo) = LOWER($1) ORDER BY time DESC LIMIT 1);", repo)
 	} else {
 		pageData.Title += fmt.Sprintf("@%s", tag)
-		c, err = db.Query("SELECT t.name, c.'group', c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2;", fullRepo, tag)
+		c, err = db.Query("SELECT t.name, c.'group', c.version, c.kind FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2;", repo, tag)
 	}
 	if err != nil {
 		log.Printf("failed to get CRDs for %s : %v", repo, err)
@@ -243,13 +300,13 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 		}
 		// TODO I'm not happy about calling this function here, I'd rather call it in a different loop in main
 		// but it works for now
-		doc(db, outDir, org, repo, tag, g, k, v)
+		doc(db, outDir, repo, tag, g, k, v)
 	}
 	if c.Err() != nil {
 		log.Printf("Error in Next: %s", err)
 		panic(err)
 	}
-	c, err = db.Query("SELECT name FROM tags WHERE LOWER(repo)=LOWER($1) ORDER BY time DESC;", fullRepo)
+	c, err = db.Query("SELECT name FROM tags WHERE LOWER(repo)=LOWER($1) ORDER BY time DESC;", repo)
 	if err != nil {
 		log.Printf("failed to get tags for %s : %v", repo, err)
 		panic(err) // something went wrong, there should be tags
@@ -266,8 +323,11 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 		}
 		tags = append(tags, t)
 	}
-	if len(tags) == 0 || (!tagExists && tag != "") {
-		panic("This shouldn't happend!")
+	if len(tags) == 0 {
+		panic("This shouldn't happen, there are no tags!")
+	}
+	if !tagExists && tag != "" {
+		panic("This shouldn't happend, the tag doesn't exist!")
 	}
 	if foundTag == "" {
 		foundTag = tags[0]
@@ -275,7 +335,7 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 
 	orgDataTmp := orgData{
 		Page:     pageData,
-		Repo:     strings.Join([]string{org, repo}, "/"),
+		Repo:     repo,
 		Tag:      foundTag,
 		Tags:     tags,
 		CRDs:     repoCRDs,
@@ -298,8 +358,8 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 	log.Printf("successfully rendered org template")
 }
 
-func doc(db *sql.DB, outDir string, org string, repo string, tag string, group string, kind string, version string) {
-	fullDir := fmt.Sprintf("%s/%s/%s/%s/%s/%s/%s", outDir, org, repo, tag, group, kind, version)
+func doc(db *sql.DB, outDir string, repo string, tag string, group string, kind string, version string) {
+	fullDir := fmt.Sprintf("%s/%s/%s/%s/%s", outDir, tag, group, kind, version)
 	err := os.MkdirAll(fullDir, 0755)
 	if err != nil {
 		log.Println("Error creating output directory:", err)
@@ -315,12 +375,11 @@ func doc(db *sql.DB, outDir string, org string, repo string, tag string, group s
 	defer file.Close()
 
 	pageData := getPageData(fmt.Sprintf("%s.%s/%s", kind, group, version), false)
-	fullRepo := fmt.Sprintf("%s/%s/%s", "github.com", org, repo)
 	var c *sql.Row
 	if tag == "" {
-		c = db.QueryRow("SELECT t.name, c.data FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE repo = $1 ORDER BY time DESC LIMIT 1) AND c.\"group\"=$2 AND c.version=$3 AND c.kind=$4;", fullRepo, group, version, kind)
+		c = db.QueryRow("SELECT t.name, c.data FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.id = (SELECT id FROM tags WHERE repo = $1 ORDER BY time DESC LIMIT 1) AND c.\"group\"=$2 AND c.version=$3 AND c.kind=$4;", repo, group, version, kind)
 	} else {
-		c = db.QueryRow("SELECT t.name, c.data FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2 AND c.'group'=$3 AND c.version=$4 AND c.kind=$5;", fullRepo, tag, group, version, kind)
+		c = db.QueryRow("SELECT t.name, c.data FROM tags t INNER JOIN crds c ON (c.tag_id = t.id) WHERE LOWER(t.repo)=LOWER($1) AND t.name=$2 AND c.'group'=$3 AND c.version=$4 AND c.kind=$5;", repo, tag, group, version, kind)
 	}
 	foundTag := tag
 	var crdJSON string
@@ -360,7 +419,6 @@ func doc(db *sql.DB, outDir string, org string, repo string, tag string, group s
 
 	if err := page.HTML(file, http.StatusOK, "doc", docData{
 		Page:        pageData,
-		Repo:        strings.Join([]string{org, repo}, "/"),
 		Tag:         foundTag,
 		Group:       gvk.Group,
 		Version:     gvk.Version,
