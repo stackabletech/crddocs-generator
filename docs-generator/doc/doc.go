@@ -84,9 +84,20 @@ type orgData struct {
 	JsonData string
 }
 
+type homeRow struct {
+	Repo      string
+	RepoShort string
+	Group     string
+	Version   string
+	Kind      string
+}
+
 type homeData struct {
-	Page  pageData
-	Repos []string
+	Page             pageData
+	Tag              string
+	PlatformVersions []string
+	Rows             []homeRow
+	JsonData         string
 }
 
 var page *render.Render
@@ -142,8 +153,14 @@ func main() {
 		},
 	})
 
+	versions := []string{"23.11.0", "nightly"}
+
 	// generate landing page
-	home(outDir)
+	home(db, outDir, "", versions)
+
+	for _, v := range versions {
+		home(db, outDir, v, versions)
+	}
 
 	// read config file
 	yamlFile, err := ioutil.ReadFile(configFile)
@@ -179,17 +196,73 @@ func getPageData(title string, disableNavBar bool) pageData {
 	}
 }
 
-func home(outDir string) {
+func fetchHomeRows(db *sql.DB, version string) []homeRow {
+	c, err := db.Query("SELECT tags.repo, crds.\"group\", crds.version, crds.kind FROM crds JOIN tags ON crds.tag_id = tags.id WHERE tags.name = $1 ORDER BY crds.kind;", version)
+	if err != nil {
+		log.Printf("failed to get crds for %s: %v", version, err)
+		panic(err) // something went wrong, there should be CRDs
+	}
+	rows := []homeRow{}
+	for c.Next() {
+		log.Printf("LALALA")
+		var r, g, v, k string
+		if err := c.Scan(&r, &g, &v, &k); err != nil {
+			log.Printf("newTemplate.Execute(): %v", err)
+		}
+		rows = append(rows, homeRow{
+			Repo:      r,
+			RepoShort: strings.Split(r, "/")[2],
+			Group:     g,
+			Version:   v,
+			Kind:      k,
+		})
+	}
+	if c.Err() != nil {
+		log.Printf("Error in Next: %s", err)
+		panic(err)
+	}
+	return rows
+}
+
+func home(db *sql.DB, outDir string, version string, versions []string) {
+	fullDir := outDir
+	if version != "" {
+		fullDir = fmt.Sprintf("%s/%s", outDir, version)
+	}
+	err := os.MkdirAll(fullDir, 0755)
+	if err != nil {
+		log.Println("Error creating output directory:", err)
+		return
+	}
 	// Open the file for writing
-	file, err := os.Create(fmt.Sprintf("%s/%s", outDir, "index.html"))
+	file, err := os.Create(fmt.Sprintf("%s/%s", fullDir, "index.html"))
 	if err != nil {
 		log.Printf("Error creating index.html: %v", err)
 		return
 	}
 	defer file.Close()
-	data := homeData{Page: getPageData("Doc", false)}
 
-	if err := page.HTML(file, http.StatusOK, "home", data); err != nil {
+	if version == "" {
+		version = versions[0]
+	}
+
+	dataTmp := homeData{
+		Page:             getPageData("Doc", false),
+		Tag:              version,
+		PlatformVersions: versions,
+		Rows:             fetchHomeRows(db, version),
+		JsonData:         "",
+	}
+
+	jsonData, err := json.Marshal(dataTmp)
+	if err != nil {
+		fmt.Println("Error marshaling JSON:", err)
+		return
+	}
+
+	dataTmp.JsonData = string(jsonData)
+
+	if err := page.HTML(file, http.StatusOK, "home", dataTmp); err != nil {
 		log.Printf("homeTemplate.Execute(): %v", err)
 		return
 	}
@@ -197,9 +270,9 @@ func home(outDir string) {
 }
 
 func org(db *sql.DB, outDir string, org string, repo string, tag string) {
-	fullDir := fmt.Sprintf("%s/%s/%s", outDir, org, repo)
+	fullDir := fmt.Sprintf("%s/%s", outDir, repo)
 	if tag != "" {
-		fullDir = fmt.Sprintf("%s/%s/%s/%s", outDir, org, repo, tag)
+		fullDir = fmt.Sprintf("%s/%s/%s", outDir, repo, tag)
 	}
 	err := os.MkdirAll(fullDir, 0755)
 	if err != nil {
@@ -299,7 +372,7 @@ func org(db *sql.DB, outDir string, org string, repo string, tag string) {
 }
 
 func doc(db *sql.DB, outDir string, org string, repo string, tag string, group string, kind string, version string) {
-	fullDir := fmt.Sprintf("%s/%s/%s/%s/%s/%s/%s", outDir, org, repo, tag, group, kind, version)
+	fullDir := fmt.Sprintf("%s/%s/%s/%s/%s", outDir, tag, group, kind, version)
 	err := os.MkdirAll(fullDir, 0755)
 	if err != nil {
 		log.Println("Error creating output directory:", err)
