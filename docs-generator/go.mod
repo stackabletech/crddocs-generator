@@ -8,7 +8,7 @@ require (
 	github.com/unrolled/render v1.0.3
 	gopkg.in/square/go-jose.v2 v2.2.2
 	gopkg.in/yaml.v2 v2.2.8
-	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
+	gopkg.in/yaml.v3 v3.0.0
 	k8s.io/apiextensions-apiserver v0.18.2
 	k8s.io/apimachinery v0.18.2
 	sigs.k8s.io/yaml v1.2.0
