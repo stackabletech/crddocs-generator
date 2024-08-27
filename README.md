@@ -9,7 +9,7 @@ This fork is customized for our (Stackable) repositories.
 
 Run
 
-  make
+    make
 
 Two binaries will be created: `gitter` and `doc`.
 
@@ -30,20 +30,20 @@ Have a look at https://github.com/stackabletech/crddocs for sample usage.
 To generate docs you need a yaml configuration file specifying which repos and tags to document.
 It should look like this:
 
-  repos:
-    airflow-operator:
+    repos:
+      airflow-operator:
+        - "24.7.0"
+        - "nightly"
+      druid-operator:
+        - "24.7.0"
+        - "nightly"
+      hbase-operator:
+        - "24.7.0"
+        - "nightly"
+  
+    platformVersions:
       - "24.7.0"
       - "nightly"
-    druid-operator:
-      - "24.7.0"
-      - "nightly"
-    hbase-operator:
-      - "24.7.0"
-      - "nightly"
-
-  platformVersions:
-    - "24.7.0"
-    - "nightly"
 
 You also need a HTML file template and a directory of static files.
 
