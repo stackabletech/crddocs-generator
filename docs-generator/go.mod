@@ -1,6 +1,6 @@
 module docs-generator
 
-go 1.21
+go 1.23
 
 require (
 	github.com/go-git/go-git/v5 v5.12.0
@@ -40,7 +40,6 @@ require (
 	github.com/go-openapi/strfmt v0.19.3 // indirect
 	github.com/go-openapi/swag v0.19.5 // indirect
 	github.com/go-openapi/validate v0.19.5 // indirect
-	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/gogo/protobuf v1.3.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.4.3 // indirect
@@ -64,7 +63,7 @@ require (
 	github.com/skeema/knownhosts v1.3.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
-	go.mongodb.org/mongo-driver v1.1.2 // indirect
+	go.mongodb.org/mongo-driver v1.16.1 // indirect
 	golang.org/x/crypto v0.26.0 // indirect
 	golang.org/x/net v0.28.0 // indirect
 	golang.org/x/oauth2 v0.0.0-20201109201403-9fd604954f58 // indirect
