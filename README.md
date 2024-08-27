@@ -1,9 +1,9 @@
 # CRD docs static generator
 
-This is a generator for a static site for CRD documentation based on hasheddans work for [doc.crds.dev](https://github.com/crdsdev/doc).
+This is a generator for a static site for CRD documentation based on [Daniel Mangums](https://github.com/hasheddan) work on [doc.crds.dev](https://github.com/crdsdev/doc).
 Thank you very much!
 
-It is customized for our (Stackable) repositories.
+This fork is customized for our (Stackable) repositories.
 
 ## Generating docs
 
