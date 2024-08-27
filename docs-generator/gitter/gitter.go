@@ -87,7 +87,8 @@ func main() {
 	}
 }
 
-// Index indexes a git repo at the specified url.
+// Index looks for CRDs inside the repo at the given tag,
+// and stores and found CRDs in the database.
 func Index(db *sql.DB, repo string, tag string) error {
 	dir, err := os.MkdirTemp(os.TempDir(), "doc-gitter")
 	if err != nil {
