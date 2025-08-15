@@ -232,7 +232,7 @@ func home(db *sql.DB, outDir string, version string, versions []string) {
 	}
 
 	dataTmp := homeData{
-		Page:             getPageData("Doc", false),
+		Page:             getPageData("CRD Documentation", false),
 		Tag:              version,
 		PlatformVersions: versions,
 		Rows:             fetchHomeRows(db, version),
