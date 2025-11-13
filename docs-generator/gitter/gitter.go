@@ -156,10 +156,11 @@ func Index(db *sql.DB, repo string, tag string) error {
 
 func getCRDsFromTag(dir string, w *git.Worktree) (map[string]models.RepoCRD, error) {
 	reg := regexp.MustCompile("kind: CustomResourceDefinition")
-	regPath := regexp.MustCompile(`^deploy/helm/.*\.yaml`)
+	helmPathRegex := regexp.MustCompile(`^deploy/helm/.*\.yaml`)
+	extraPathRegex := regexp.MustCompile(`^extra/.*\.yaml`)
 	g, _ := w.Grep(&git.GrepOptions{
 		Patterns:  []*regexp.Regexp{reg},
-		PathSpecs: []*regexp.Regexp{regPath},
+		PathSpecs: []*regexp.Regexp{helmPathRegex, extraPathRegex},
 	})
 	repoCRDs := map[string]models.RepoCRD{}
 	files := getYAMLs(g, dir)
