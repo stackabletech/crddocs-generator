@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	servervalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
@@ -100,11 +101,44 @@ func (c *CRDer) Validate(data []byte) error {
 	return nil
 }
 
+// Remove null values from enums
+//
+// kube-rs 2.0.1 appends a null to all enums. These null values cannot be processed by this module.
+func removeNullsFromEnums(schema *v1.JSONSchemaProps) {
+	if schema.Enum != nil {
+		schema.Enum = slices.DeleteFunc(schema.Enum, func(entry v1.JSON) bool {
+			return entry.Size() == 0
+		})
+	}
+
+	if schema.Properties != nil {
+		for key, value := range schema.Properties {
+			removeNullsFromEnums(&value)
+			schema.Properties[key] = value
+		}
+	}
+
+	if schema.AdditionalProperties != nil && schema.AdditionalProperties.Schema != nil {
+		removeNullsFromEnums(schema.AdditionalProperties.Schema)
+	}
+}
+
+func fixCrd(crd *v1.CustomResourceDefinition) {
+	for _, version := range crd.Spec.Versions {
+		if version.Schema != nil && version.Schema.OpenAPIV3Schema != nil {
+			removeNullsFromEnums(version.Schema.OpenAPIV3Schema)
+		}
+	}
+}
+
 func convertV1ToInternal(data []byte, internal *apiextensions.CustomResourceDefinition, mods ...Modifier) error {
 	crd := &v1.CustomResourceDefinition{}
 	if err := yaml.Unmarshal(data, crd); err != nil {
 		return err
 	}
+
+	fixCrd(crd)
+
 	v1.SetDefaults_CustomResourceDefinition(crd)
 	if err := v1.Convert_v1_CustomResourceDefinition_To_apiextensions_CustomResourceDefinition(crd, internal, nil); err != nil {
 		return err

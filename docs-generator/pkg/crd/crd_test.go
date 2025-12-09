@@ -313,6 +313,44 @@ status:
   storedVersions: []
 `)
 
+var crdWithNullInEnum = []byte(`
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: nullinenumtests.example.com
+spec:
+  group: example.com
+  names:
+    categories: []
+    kind: NullInEnumTest
+    plural: nullinenumtests
+    singular: nullinenumtest
+  scope: Namespaced
+  versions:
+    - additionalPrinterColumns: []
+      name: v1
+      schema:
+        openAPIV3Schema:
+          properties:
+            root:
+              additionalProperties:
+                properties:
+                  choice:
+                    enum:
+                      - null
+                      - entry1
+                      - null
+                      - entry2
+                      - null
+                    type: string
+                type: object
+              type: object
+          type: object
+      served: true
+      storage: true
+`)
+
 var a = []byte(`
 apiVersion: example.com/v1
 kind: CronTab
@@ -341,6 +379,18 @@ specTemplate:
   reclaimPolicy: Delete
 `)
 
+var c = []byte(`
+---
+apiVersion: example.com/v1
+kind: NullInEnumTest
+metadata:
+  name: null-in-enum-test
+  namespace: test
+root:
+  property:
+    choice: entry1
+`)
+
 func TestValidate(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -364,6 +414,12 @@ func TestValidate(t *testing.T) {
 			name:        "crossplane valid",
 			crd:         crossplane,
 			instance:    b,
+			expectedErr: false,
+		},
+		{
+			name:        "crdWithNullInEnum valid",
+			crd:         crdWithNullInEnum,
+			instance:    c,
 			expectedErr: false,
 		},
 	}
