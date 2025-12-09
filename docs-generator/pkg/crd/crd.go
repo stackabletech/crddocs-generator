@@ -103,7 +103,7 @@ func (c *CRDer) Validate(data []byte) error {
 
 // Remove null values from enums
 //
-// kube-rs 2.0.1 appends a null to all enums which cannot be processed by this module.
+// kube-rs 2.0.1 appends a null to all enums. These null values cannot be processed by this module.
 func removeNullsFromEnums(schema *v1.JSONSchemaProps) {
 	if schema.Enum != nil {
 		schema.Enum = slices.DeleteFunc(schema.Enum, func(entry v1.JSON) bool {
