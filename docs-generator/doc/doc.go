@@ -157,6 +157,10 @@ func main() {
 		log.Fatalf("Error loading config: %s: %v", configFile, err)
 		panic(err)
 	}
+	if err := conf.ResolveTags(); err != nil {
+		log.Fatalf("Error resolving tags: %v", err)
+		panic(err)
+	}
 
 	// generate landing page(s)
 	home(db, outDir, "", conf.PlatformVersions)
@@ -165,7 +169,7 @@ func main() {
 	}
 
 	// generate doc pages for all repos and CRDs
-	for repo, tags := range conf.Repos {
+	for repo, tags := range conf.Tags {
 		org(db, outDir, repo, "")
 		for _, tag := range tags {
 			org(db, outDir, repo, tag)
