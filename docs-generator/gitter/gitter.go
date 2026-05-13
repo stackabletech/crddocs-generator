@@ -72,9 +72,13 @@ func main() {
 		log.Fatalf("Error loading config: %s: %v", configFile, err)
 		panic(err)
 	}
+	if err := conf.ResolveTags(); err != nil {
+		log.Fatalf("Error resolving tags: %v", err)
+		panic(err)
+	}
 
 	// index repos
-	for repo, tags := range conf.Repos {
+	for repo, tags := range conf.Tags {
 		log.Printf("Indexing repo %s ...\n", repo)
 		for _, tag := range tags {
 			log.Printf("... at tag: %s ...\n", tag)

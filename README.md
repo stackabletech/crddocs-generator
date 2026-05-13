@@ -27,23 +27,18 @@ It stores these in an SQLite database.
 ## Generating docs
 
 Have a look at https://github.com/stackabletech/crddocs for sample usage.
-To generate docs you need a yaml configuration file specifying which repos and tags to document.
-It should look like this:
+To generate docs you need a yaml configuration file listing the repos to document:
 
     repos:
-      airflow-operator:
-        - "24.7.0"
-        - "nightly"
-      druid-operator:
-        - "24.7.0"
-        - "nightly"
-      hbase-operator:
-        - "24.7.0"
-        - "nightly"
-  
-    platformVersions:
-      - "24.7.0"
-      - "nightly"
+      - airflow-operator
+      - druid-operator
+      - hbase-operator
+
+Tags are auto-discovered: all calver `YY.M.P` tags on each repo at
+`github.com/stackabletech/<repo>` are listed, only the latest patch per
+`YY.M` release line is kept, and `nightly` (tracking `main`) is always added.
+The platform-version list shown on the landing page is the union across all
+repos.
 
 You also need a HTML file template and a directory of static files.
 

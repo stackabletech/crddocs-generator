@@ -1,5 +1,5 @@
 # Set the shell to bash always
-SHELL := /bin/bash
+SHELL := /usr/bin/env bash
 
 # Note: CGO_ENABLED is required for the SQLite3 module.
 export CGO_ENABLED=1
